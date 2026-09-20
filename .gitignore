@@ -65,3 +65,6 @@ results/*
 
 # Theseus interactive
 tests/interactive/*
+
+# Apple-specific
+.DS_Store
