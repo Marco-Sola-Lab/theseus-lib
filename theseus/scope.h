@@ -36,6 +36,11 @@
  * That is, it stores the wavefronts and position vectors for each score in a
  * circular queue.
  *
+ * The M and jumps wavefronts are normally kept for the whole alignment (for the
+ * backtrace) in the BeyondScope. In score-only mode they are not needed after
+ * leaving the scope, so they are stored here too (see m_wf and the jumps
+ * wavefronts below).
+ *
  */
 
 namespace theseus {
@@ -143,6 +148,50 @@ public:
     }
 
     /**
+     * @brief Get the cells of the M wavefronts of score "score" (score-only
+     * mode only).
+     *
+     * @param score
+     * @return Cell::CellVector&
+     */
+    Cell::CellVector &m_wf(int score) {
+        return _squeue[score%_squeue.size()]._m_wf;
+    }
+
+    /**
+     * @brief Get the cells of the M jumps of score "score" (score-only mode
+     * only).
+     *
+     * @param score
+     * @return Cell::CellVector&
+     */
+    Cell::CellVector &m_jumps_wf(int score) {
+        return _squeue[score%_squeue.size()]._m_jumps_wf;
+    }
+
+    /**
+     * @brief Get the cells of the I jumps of score "score" (score-only mode
+     * only).
+     *
+     * @param score
+     * @return Cell::CellVector&
+     */
+    Cell::CellVector &i_jumps_wf(int score) {
+        return _squeue[score%_squeue.size()]._i_jumps_wf;
+    }
+
+    /**
+     * @brief Get the cells of the I2 jumps of score "score" (score-only mode
+     * only).
+     *
+     * @param score
+     * @return Cell::CellVector&
+     */
+    Cell::CellVector &i2_jumps_wf(int score) {
+        return _squeue[score%_squeue.size()]._i2_jumps_wf;
+    }
+
+    /**
      * @brief Get the data from the vector of M positions at score "score".
      *
      * @param score
@@ -205,6 +254,13 @@ private:
         Cell::CellVector _i2_wf;
         Cell::CellVector _d2_wf;
 
+        // M and jumps cells (score-only mode only, otherwise they are kept in
+        // the BeyondScope). They start empty and grow on demand.
+        Cell::CellVector _m_wf;
+        Cell::CellVector _m_jumps_wf;
+        Cell::CellVector _i_jumps_wf;
+        Cell::CellVector _i2_jumps_wf;
+
         RangeVector _m_pos;
 
         RangeVector _i_pos;
@@ -230,6 +286,11 @@ private:
             _i2_wf.set_realloc_policy(realloc_policy);
             _d2_wf.set_realloc_policy(realloc_policy);
 
+            _m_wf.set_realloc_policy(realloc_policy);
+            _m_jumps_wf.set_realloc_policy(realloc_policy);
+            _i_jumps_wf.set_realloc_policy(realloc_policy);
+            _i2_jumps_wf.set_realloc_policy(realloc_policy);
+
             _m_pos.set_realloc_policy(realloc_policy);
             _i_pos.set_realloc_policy(realloc_policy);
             _i2_pos.set_realloc_policy(realloc_policy);
@@ -242,6 +303,11 @@ private:
             _d_wf.resize(new_size);
             _i2_wf.resize(new_size);
             _d2_wf.resize(new_size);
+
+            _m_wf.resize(new_size);
+            _m_jumps_wf.resize(new_size);
+            _i_jumps_wf.resize(new_size);
+            _i2_jumps_wf.resize(new_size);
 
             _m_pos.resize(new_size);
             _i_pos.resize(new_size);

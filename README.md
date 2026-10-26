@@ -112,6 +112,12 @@ Once this is done, we can start aligning sequences to the reference graph using 
 theseus::Alignment alignment_object = aligner.align(sequence, start_vertex, start_offset, use_density_drop, use_lag_pruning);
 ```
 
+If you only need the alignment score (and where the alignment ends), you can use the **score-only mode**. In this mode Theseus does not perform the backtrace, so it does not keep the information needed to recover the alignment, which reduces the memory usage. Enable it with:
+```
+aligner.set_alignment_mode(theseus::AlignmentMode::ScoreOnly);
+```
+The returned Alignment object contains the score (`alignment.score`), the start and end offsets, and a path with only the last vertex of the alignment. The CIGAR (`edit_op`) is empty. The score is the same as in the default mode (`theseus::AlignmentMode::Full`, used by default). Use `Full` again to recover the complete alignment. The score-only mode is only available for the sequence-to-graph aligner, the MSA aligner always computes the full alignment.
+
 ### <a name="graph_creation"></a> 2.3. Creating a graph
 
 The Theseus' library, allows you to create your own reference graphs to perform sequence-to-graph alignment. A graph is composed of two key elements: nodes and edges. Nodes store genomics' data in the form of a sequence of characters, and edges represent connections between these existing nodes. If you want to create a graph, you first have to include the "theseus/graph.h" header file:

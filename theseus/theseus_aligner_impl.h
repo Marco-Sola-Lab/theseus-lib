@@ -91,6 +91,13 @@ public:
                     bool lag_pruning_active = false);
 
     /**
+     * @brief Set the alignment mode (full alignment or score only).
+     *
+     * @param mode
+     */
+    void set_alignment_mode(AlignmentMode mode) { _mode = mode; }
+
+    /**
      * @brief Output the current graph in GFA format.
      *
      * @param gfa_output  Output stream to write the graph in GFA format
@@ -269,9 +276,14 @@ private:
     template <Cell::Matrix matrix>
     Scope::RangeVector &gap_pos(int score);       // Scope positions
     template <Cell::Matrix matrix>
-    Cell::CellVector &gap_jumps_wf();             // Jumps wavefront (I and I2)
+    Cell::CellVector &gap_jumps_wf(int score);    // Jumps wavefront (I and I2)
     template <Cell::Matrix matrix>
     std::vector<std::vector<Cell::pos_t>> &gap_jumps_positions(NodeId node_id); // Jumps positions (I and I2)
+
+    // Cells of the M and M jumps wavefronts of score "score". They are kept in
+    // the BeyondScope for the backtrace or, in score-only mode, in the scope.
+    Cell::CellVector &m_wf(int score);
+    Cell::CellVector &m_jumps_wf(int score);
 
     /**
      * @brief Compute the next M matrix for a vertex v. This implies both sparsifying
@@ -450,6 +462,9 @@ private:
     bool has_out_nodes(NodeId id);
 
     int32_t _score = 0;
+
+    AlignmentMode _mode = AlignmentMode::Full;
+    bool _score_only = false;   // Score-only mode in the current alignment
 
     Penalties _penalties;
     InternalPenalties _internal_penalties;

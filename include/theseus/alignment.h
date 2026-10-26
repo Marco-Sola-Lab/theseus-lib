@@ -43,6 +43,18 @@ namespace theseus {
 
 using NodeId = Graph::NodeId;
 
+/**
+ * Alignment modes:
+ * - Full: compute the score and the alignment (CIGAR and path). The M
+ *   wavefronts are kept until the end of the alignment for the backtrace.
+ * - ScoreOnly: compute only the score and the end position of the alignment.
+ *   Only the wavefronts of the last scores (the scope) are kept in memory.
+ */
+enum class AlignmentMode {
+    Full,
+    ScoreOnly
+};
+
 class Alignment {
     public:
     /*
@@ -87,8 +99,9 @@ class Alignment {
        *        of the set of edit operations of the alignment and the path of the alignment
        *        through the reference graph.
        */
-      std::vector<char> edit_op;    // Edit operations
-      std::vector<NodeId> path;     // Path of the alignment
+      std::vector<char> edit_op;    // Edit operations (empty in score-only mode)
+      std::vector<NodeId> path;     // Path of the alignment (in score-only mode,
+                                    // only the last vertex of the path)
       int start_offset;             // Start offset in the first vertex of the path
       int end_offset;               // End offset in the last vertex of the path
       int theseus_status;           // Alignment status

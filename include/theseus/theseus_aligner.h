@@ -115,6 +115,15 @@ namespace theseus
                         bool density_drop_active = false,
                         bool lag_pruning_active = false);
 
+        /**
+         * @brief Set the alignment mode (Full by default). In ScoreOnly mode
+         * the returned alignment only contains the score, the last vertex of
+         * the path and the end offset.
+         *
+         * @param mode Alignment mode
+         */
+        void set_alignment_mode(AlignmentMode mode);
+
     private:
         std::unique_ptr<TheseusAlignerImpl> aligner_impl_;
     };

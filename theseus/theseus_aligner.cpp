@@ -79,4 +79,8 @@ Alignment TheseusAligner::align(
     return aligner_impl_->align(seq, start_node, start_offset, 1, false, false, density_drop_active, lag_pruning_active);
 }
 
+void TheseusAligner::set_alignment_mode(AlignmentMode mode) {
+    aligner_impl_->set_alignment_mode(mode);
+}
+
 } // namespace theseus
