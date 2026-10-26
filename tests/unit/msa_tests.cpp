@@ -31,6 +31,7 @@
 #include <vector>
 #include <string>
 #include <iostream>
+#include <sstream>
 #include "../../include/theseus/alignment.h"
 #include "../../include/theseus/penalties.h"
 #include "../../include/theseus/theseus_msa_aligner.h"
@@ -133,7 +134,7 @@ TEST_CASE("Check MSA aligner") {
         theseus::TheseusMSA aligner(penalties, heuristics, initial_seq,1); // Create aligner
 
         // Align the new sequence
-        theseus::Alignment alignment = aligner.align(new_seq, false);
+        theseus::Alignment alignment = aligner.align(new_seq);
 
         // Check if alignment was successful
         CHECK(alignment.score == 6); // Check score
@@ -173,19 +174,19 @@ TEST_CASE("Check MSA aligner") {
         theseus::TheseusMSA aligner(penalties, heuristics, initial_seq,1); // Create aligner
 
         // Align and check sequence 1
-        theseus::Alignment alignment = aligner.align(seq_1, false);
+        theseus::Alignment alignment = aligner.align(seq_1);
         CHECK(alignment.score == 2); // Check score
 
         // Align and check sequence 2
-        alignment = aligner.align(seq_2, false);
+        alignment = aligner.align(seq_2);
         CHECK(alignment.score == 6); // Check score
 
         // Align and check sequence 3
-        alignment = aligner.align(seq_3, false);
+        alignment = aligner.align(seq_3);
         CHECK(alignment.score == 0); // Check score
 
         // Align and check sequence 4
-        alignment = aligner.align(seq_4, false);
+        alignment = aligner.align(seq_4);
         CHECK(alignment.score == 9); // Check score
     }
 
@@ -216,7 +217,53 @@ TEST_CASE("Check MSA aligner") {
         CHECK(alignment.score == 7); // Check score
 
         // // Align and check sequence 4
-        // alignment = aligner.align(seq_4, false);
+        // alignment = aligner.align(seq_4);
         // CHECK(alignment.score == 9); // Check score
+    }
+}
+
+TEST_CASE("Check MSA aligner regressions") {
+    SUBCASE("Weighted majority voting counts the last added sequence") {
+        // The insertion appears in 1 of 2 sequences: it is not a majority (exactly
+        // half), so it must not be part of the consensus
+        theseus::Penalties penalties(0, 2, 3, 1);
+        theseus::Heuristics heuristics;
+        theseus::TheseusMSA aligner(penalties, heuristics, "ACGTACGTACGT", 1);
+        aligner.align("ACGTACTTTTGTACGT", 1);
+
+        std::vector<int> weights;
+        std::string consensus, gapped_consensus;
+        aligner.majority_voting_consensus(weights, consensus, gapped_consensus);
+        CHECK(consensus == "ACGTACGTACGT");
+    }
+
+    SUBCASE("The MSA reproduces every sequence") {
+        theseus::Penalties penalties(0, 2, 3, 1);
+        theseus::Heuristics heuristics;
+        std::vector<std::string> sequences = {"ACCCGTAAAAGGG", "ACCCGTCAAAGGG", "ACCCGAAGGG", "ACCCCCATAAGAGGG"};
+        theseus::TheseusMSA aligner(penalties, heuristics, sequences[0], 1);
+        for (size_t i = 1; i < sequences.size(); ++i) aligner.align(sequences[i]);
+
+        std::ostringstream msa;
+        aligner.print_as_msa(msa);
+        std::istringstream in(msa.str());
+        std::string line;
+        std::vector<std::string> rows;
+        while (std::getline(in, line)) {
+            if (line[0] == '>') rows.push_back("");
+            else for (char c : line) if (c != '-') rows.back() += c;
+        }
+        REQUIRE(rows.size() == sequences.size() + 1);   // + consensus
+        for (size_t i = 0; i < sequences.size(); ++i) CHECK(rows[i] == sequences[i]);
+    }
+
+    SUBCASE("Dual affine gaps") {
+        std::string initial_seq = "ACGTTGCAAGCTTAGGCATCGATCCGATTACGGATCAGTC";
+        theseus::Penalties penalties(0, 4, 6, 2, 12, 1);
+        theseus::Heuristics heuristics;
+        theseus::TheseusMSA aligner(penalties, heuristics, initial_seq, 1);
+
+        theseus::Alignment alignment = aligner.align(initial_seq.substr(0, 10) + initial_seq.substr(22));
+        CHECK(alignment.score == 24);
     }
 }
