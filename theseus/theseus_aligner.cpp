@@ -75,7 +75,8 @@ Alignment TheseusAligner::align(
     bool density_drop_active,
     bool lag_pruning_active) {
 
-    return aligner_impl_->align(seq, start_node, start_offset, 1, density_drop_active, lag_pruning_active, false, false);
+    // Arguments: weight, is_ends_free, reverse_alignment, density_drop_active, lag_pruning_active
+    return aligner_impl_->align(seq, start_node, start_offset, 1, false, false, density_drop_active, lag_pruning_active);
 }
 
 } // namespace theseus

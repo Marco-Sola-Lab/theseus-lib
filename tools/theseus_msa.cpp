@@ -50,6 +50,9 @@ struct CMDArgs {
     int mismatch = 2;
     int gapo = 3;
     int gape = 1;
+    // Second piece of the gap function (dual affine). Both must be set to use it
+    int gapo2 = -1;
+    int gape2 = -1;
     // Heuristics
     bool lag_pruning = false;
     // I/O
@@ -125,6 +128,8 @@ void help() {
                  "  -x, --mismatch <int>        The mismatch penalty                                    [default=2]\n"
                  "  -o, --gapo <int>            The gap open penalty                                    [default=3]\n"
                  "  -e, --gape <int>            The gap extension penalty                               [default=1]\n"
+                 "  -O, --gapo2 <int>           The second gap open penalty (dual affine)               [default=none]\n"
+                 "  -E, --gape2 <int>           The second gap extension penalty (dual affine)          [default=none]\n"
                  "  -t, --output_type <int>     The output format of the multiple alignment             [default=0=MSA]\n"
                  "                               0: MSA: Standard Multiple Sequence Alignment format,\n"
                  "                               1: GFA: Output the resulting POA graph in GFA format,\n"
@@ -148,6 +153,8 @@ CMDArgs parse_args(int argc, char *const *argv) {
                                           {"mismatch", required_argument, 0, 'x'},
                                           {"gapo", required_argument, 0, 'o'},
                                           {"gape", required_argument, 0, 'e'},
+                                          {"gapo2", required_argument, 0, 'O'},
+                                          {"gape2", required_argument, 0, 'E'},
                                           {"output_type", required_argument, 0, 't'},
                                           {"sequences", required_argument, 0, 's'},
                                           {"output", required_argument, 0, 'f'},
@@ -158,7 +165,7 @@ CMDArgs parse_args(int argc, char *const *argv) {
 
     int opt;
     int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "m:x:o:e:t:s:f:l", long_options, &option_index)) != -1) {
+    while ((opt = getopt_long(argc, argv, "m:x:o:e:O:E:t:s:f:l", long_options, &option_index)) != -1) {
         switch (opt) {
             case 'm':
                 args.match = std::stoi(optarg);
@@ -171,6 +178,12 @@ CMDArgs parse_args(int argc, char *const *argv) {
                 break;
             case 'e':
                 args.gape = std::stoi(optarg);
+                break;
+            case 'O':
+                args.gapo2 = std::stoi(optarg);
+                break;
+            case 'E':
+                args.gape2 = std::stoi(optarg);
                 break;
             case 't':
                 args.output_type = std::stoi(optarg);
@@ -211,7 +224,15 @@ int main(int argc, char *const *argv) {
     }
 
     // Define alignment penalties
-    theseus::Penalties penalties(args.match, args.mismatch, args.gapo, args.gape);
+    // Both pieces of the second gap function are needed for dual affine gaps
+    if ((args.gapo2 < 0) != (args.gape2 < 0)) {
+        std::cerr << "The second gap open (-O) and extension (-E) penalties must be set together\n";
+        return 1;
+    }
+    const bool dual_affine = args.gapo2 >= 0;
+    theseus::Penalties penalties = dual_affine
+        ? theseus::Penalties(args.match, args.mismatch, args.gapo, args.gape, args.gapo2, args.gape2)
+        : theseus::Penalties(args.match, args.mismatch, args.gapo, args.gape);
     // Determine heuristics
     theseus::Heuristics heuristics;
     // Read the sequences for the MSA
@@ -231,7 +252,7 @@ int main(int argc, char *const *argv) {
         if (alignments[j].theseus_status != THESEUS_STATUS_ALG_COMPLETED) {
             std::cerr << "Alignment " << j << " with status " << alignments[j].theseus_status << " did not complete successfully" << std::endl;
         }
-        std::cout << "Score = " << alignments[j].compute_affine_gap_score(penalties) << std::endl << std::endl;
+        std::cout << "Score = " << alignments[j].score << std::endl << std::endl;
     }
 
     // Print the output

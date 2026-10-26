@@ -28,6 +28,8 @@
 
 #pragma once
 
+#include <stdexcept>
+
 #include "theseus/penalties.h"
 
 /**
@@ -42,36 +44,102 @@ class InternalPenalties {
 public:
     using penalty_t = Penalties::penalty_t;
 
-    InternalPenalties(Penalties penalties) {
-        // Transform penalties in an Eizenga fashion
+    InternalPenalties(Penalties penalties) : _original_match(penalties.match()) {
+        // Transform penalties to have match = 0
         if (penalties.match() != 0) {
-            _match = 0;
-            _mismatch = 2*penalties.mism() - 2*penalties.match();
-            _gapo = 2*penalties.gapo();
-            _gape = 2*penalties.gape() - penalties.match();
+            // What happens with negative or mixed penalties? TODO:
+            // We subtract "match" once per consumed QUERY character (M, X and D).
+            // The query length is fixed, so every path in the graph is shifted by
+            // the same constant. Subtracting it per graph character (I) would
+            // depend on the length of the chosen path in the graph, potentilly
+            // yielding different, non-equivalent, optimal paths.
+            _match    = 0;
+            _mismatch = penalties.mism() - penalties.match();
+            _gapo     = penalties.gapo();
+            _inse     = penalties.gape();
+            _dele     = penalties.gape() - penalties.match();
         }
         else {
-            _match = penalties.match();
+            _match    = penalties.match();
             _mismatch = penalties.mism();
-            _gapo = penalties.gapo();
-            _gape = penalties.gape();
+            _gapo     = penalties.gapo();
+            _inse     = penalties.gape();
+            _dele     = penalties.gape();
         }
 
-        if (penalties.match() > penalties.mism()) {
+        // Second piece of the gap function
+        _dual = penalties.type() == Penalties::Type::DualAffine;
+        if (_dual) {
+            _gapo2 = penalties.gapo2();
+            _inse2 = penalties.gape2();
+            _dele2 = penalties.gape2() - penalties.match();
+        }
+        else {
+            _gapo2 = _gapo;
+            _inse2 = _inse;
+            _dele2 = _dele;
+        }
+
+        // We ask the user for minimization penalties
+        // TODO: Accept maximization penalties and internally transform them to
+        // minimization penalties
+        if (penalties.match() >= penalties.mism()) {
             throw std::invalid_argument("The match penalty must be less than the mismatch penalty");
         }
-        else if (penalties.match() > penalties.gapo()) {
-            throw std::invalid_argument("The match penalty must be less than or equal to the gap open penalty.");
+        else if (penalties.match() >= penalties.gapo() + penalties.gape()) {
+            throw std::invalid_argument("The gap open + gap extension penalty must be greater than the match penalty.");
         }
-        else if (penalties.match() > penalties.gape()) {
-            throw std::invalid_argument("The match penalty must be less than or equal to the gap extend penalty.");
+        else if (penalties.match() >= penalties.gape()) {
+            throw std::invalid_argument("The gap extension penalty must be greater than the match penalty.");
         }
         else if (penalties.gapo() < penalties.gape()) {
             throw std::invalid_argument("The gap open penalty must be greater than or equal to the gap extension penalty.");
         }
-
-        // TODO: Control for dual affine penalties
+        else if (penalties.gapo() + penalties.gape() <= 0) {
+            throw std::invalid_argument("The sum of the gap open and gap extension penalties must be greater than 0.");
+        }
+        else if (penalties.gape() <= 0) {
+            throw std::invalid_argument("The gap extension penalty must be greater than 0.");
+        }
+        // Dual affine: the second piece must be the "long gaps" piece (higher
+        // opening and lower extension).
+        if (_dual) {
+            if (penalties.gape2() <= penalties.match()) {
+                throw std::invalid_argument("The second gap extension penalty must be greater than the match penalty.");
+            }
+            else if (penalties.gape2() <= 0) {
+                throw std::invalid_argument("The second gap extension penalty must be greater than 0.");
+            }
+            else if (penalties.gape2() > penalties.gape()) {
+                throw std::invalid_argument("The second gap extension penalty must be less than or equal to the first one.");
+            }
+            else if (penalties.gapo2() < penalties.gapo()) {
+                throw std::invalid_argument("The second gap open penalty must be greater than or equal to the first one.");
+            }
+        }
     }
+
+    /**
+     * Transform an internal score back to the score under the user penalties.
+     * Internal penalties subtract "match" once per consumed query character in
+     * every alignment path (also with dual affine gaps), so:
+     *   original = internal + match * consumed_chars
+     * Valid for full alignments (consumed_chars = sequence length) and partial ones.
+     *
+     * @param internal_score Score under the internal penalties.
+     * @param consumed_chars Number of query characters consumed.
+     * @return The score under the user penalties.
+     */
+    penalty_t to_original_score(penalty_t internal_score, int consumed_chars) const {
+        return internal_score + _original_match * consumed_chars;
+    }
+
+    /**
+     * Whether the gap function has two pieces (dual affine).
+     *
+     * @return True if the penalties are dual affine.
+     */
+    bool is_dual() const { return _dual; }
 
     /**
      * Get the match score.
@@ -95,11 +163,18 @@ public:
     penalty_t gapo() const { return _gapo; }
 
     /**
-     * Get the gap extension penalty.
+     * Get the insertion extension penalty.
      *
-     * @return The gap extension penalty.
+     * @return The insertion extension penalty.
      */
-    penalty_t gape() const { return _gape; }
+    penalty_t inse() const { return _inse; }
+
+    /**
+     * Get the deletion extension penalty.
+     *
+     * @return The deletion extension penalty.
+     */
+    penalty_t dele() const { return _dele; }
 
     /**
      * Get the second gap open penalty if the gap type is dual affine.
@@ -109,24 +184,36 @@ public:
     penalty_t gapo2() const { return _gapo2; }
 
     /**
-     * Get the second gap extension penalty if the gap type is dual affine.
+     * Get the second insertion extension penalty if the gap type is dual affine.
      *
-     * @return The gap extension penalty if the gap type is dual affine.
+     * @return The insertion extension penalty if the gap type is dual affine.
      */
-    penalty_t gape2() const { return _gape2; }
+    penalty_t inse2() const { return _inse2; }
+
+    /**
+     * Get the second deletion extension penalty if the gap type is dual affine.
+     *
+     * @return The deletion extension penalty if the gap type is dual affine.
+     */
+    penalty_t dele2() const { return _dele2; }
 
 private:
+    penalty_t _original_match; // Match score of the user penalties
+
     // Diagonal penalties
     penalty_t _match;
     penalty_t _mismatch;
 
     // Affine gap penalties
     penalty_t _gapo;
-    penalty_t _gape;
+    penalty_t _inse;
+    penalty_t _dele;
 
     // Dual affine gap penalties
     penalty_t _gapo2;
-    penalty_t _gape2;
+    penalty_t _inse2;
+    penalty_t _dele2;
+    bool _dual;
 };
 
 } // namespace theseus

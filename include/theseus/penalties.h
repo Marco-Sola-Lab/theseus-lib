@@ -144,7 +144,7 @@ public:
      * @return The gap extension penalty if the gap type is dual affine.
      * Otherwise, return 0.
      */
-    penalty_t gape2() const { return gape_; }
+    penalty_t gape2() const { return gape2_; }
 
 
 protected:

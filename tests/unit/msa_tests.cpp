@@ -56,7 +56,7 @@ TEST_CASE("Check MSA aligner") {
         theseus::Alignment alignment = aligner.align(new_seq, 1, false);
 
         // Check if alignment was successful
-        CHECK(alignment.compute_affine_gap_score(penalties) == 0); // Check score
+        CHECK(alignment.score == 0); // Check score
         CHECK(alignment.edit_op == expected_cigar);                  // Check CIGAR
         CHECK(alignment.path == std::vector<NodeId>({0, 1, 2}));     // Check path
     }
@@ -76,7 +76,7 @@ TEST_CASE("Check MSA aligner") {
         theseus::Alignment alignment = aligner.align(new_seq, 1, false);
 
         // Check if alignment was successful
-        CHECK(alignment.compute_affine_gap_score(penalties) == 2); // Check score
+        CHECK(alignment.score == 2); // Check score
         CHECK(alignment.edit_op == expected_cigar);                  // Check CIGAR
         CHECK(alignment.path == std::vector<NodeId>({0, 1, 2}));        // Check path
     }
@@ -96,7 +96,7 @@ TEST_CASE("Check MSA aligner") {
         theseus::Alignment alignment = aligner.align(new_seq, 1, false);
 
         // Check if alignment was successful
-        CHECK(alignment.compute_affine_gap_score(penalties) == 6);    // Check score
+        CHECK(alignment.score == 6);    // Check score
         CHECK(alignment.edit_op == expected_cigar);                      // Check CIGAR
         CHECK(alignment.path == std::vector<NodeId>({0, 1, 2}));         // Check path
     }
@@ -116,7 +116,7 @@ TEST_CASE("Check MSA aligner") {
         theseus::Alignment alignment = aligner.align(new_seq, 1, false);
 
         // Check if alignment was successful
-        CHECK(alignment.compute_affine_gap_score(penalties) == 6); // Check score
+        CHECK(alignment.score == 6); // Check score
         CHECK(alignment.edit_op == expected_cigar);                  // Check CIGAR
         CHECK(alignment.path == std::vector<NodeId>({0, 1, 2}));        // Check path
     }
@@ -136,7 +136,7 @@ TEST_CASE("Check MSA aligner") {
         theseus::Alignment alignment = aligner.align(new_seq, false);
 
         // Check if alignment was successful
-        CHECK(alignment.compute_affine_gap_score(penalties) == 6); // Check score
+        CHECK(alignment.score == 6); // Check score
         CHECK(alignment.edit_op == expected_cigar);                  // Check CIGAR
         CHECK(alignment.path == std::vector<NodeId>({0, 1, 2}));        // Check path
     }
@@ -155,7 +155,7 @@ TEST_CASE("Check MSA aligner") {
         theseus::Alignment alignment = aligner.align(new_seq, 1, false);
 
         // Check if alignment was successful
-        CHECK(alignment.compute_affine_gap_score(penalties) == 9); // Check score
+        CHECK(alignment.score == 9); // Check score
         CHECK(alignment.path == std::vector<NodeId>({0, 1, 2}));        // Check path
     }
 
@@ -174,19 +174,19 @@ TEST_CASE("Check MSA aligner") {
 
         // Align and check sequence 1
         theseus::Alignment alignment = aligner.align(seq_1, false);
-        CHECK(alignment.compute_affine_gap_score(penalties) == 2); // Check score
+        CHECK(alignment.score == 2); // Check score
 
         // Align and check sequence 2
         alignment = aligner.align(seq_2, false);
-        CHECK(alignment.compute_affine_gap_score(penalties) == 6); // Check score
+        CHECK(alignment.score == 6); // Check score
 
         // Align and check sequence 3
         alignment = aligner.align(seq_3, false);
-        CHECK(alignment.compute_affine_gap_score(penalties) == 0); // Check score
+        CHECK(alignment.score == 0); // Check score
 
         // Align and check sequence 4
         alignment = aligner.align(seq_4, false);
-        CHECK(alignment.compute_affine_gap_score(penalties) == 9); // Check score
+        CHECK(alignment.score == 9); // Check score
     }
 
     SUBCASE("Correct reversed MSA") {
@@ -205,18 +205,18 @@ TEST_CASE("Check MSA aligner") {
 
         // Align and check sequence 1
         theseus::Alignment alignment = aligner.align(seq_1, 1, true);
-        CHECK(alignment.compute_affine_gap_score(penalties) == 2); // Check score
+        CHECK(alignment.score == 2); // Check score
 
         // Align and check sequence 2
         alignment = aligner.align(seq_2, 1, false);
-        CHECK(alignment.compute_affine_gap_score(penalties) == 6); // Check score
+        CHECK(alignment.score == 6); // Check score
 
         // // Align and check sequence 3
         alignment = aligner.align(seq_3, 1, true);
-        CHECK(alignment.compute_affine_gap_score(penalties) == 7); // Check score
+        CHECK(alignment.score == 7); // Check score
 
         // // Align and check sequence 4
         // alignment = aligner.align(seq_4, false);
-        // CHECK(alignment.compute_affine_gap_score(penalties) == 9); // Check score
+        // CHECK(alignment.score == 9); // Check score
     }
 }

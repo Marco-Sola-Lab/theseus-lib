@@ -75,18 +75,20 @@ public:
         _m_wf_pos.clear();
         _m_jumps_wf_pos.clear();
         _i_jumps_wf_pos.clear();
+        _i2_jumps_wf_pos.clear();
     }
 
     /**
      * @brief Update the positions vectors. This means, compute the size of the
-     * four Cell vectors (M, M_jumps, I and I_jumps) and push this value back to
+     * Cell vectors (M, M_jumps, I_jumps and I2_jumps) and push this value back to
      * the associated vectors.
      *
      */
     void update_positions() {
         _m_wf_pos.push_back(_m_wf.size());
         _m_jumps_wf_pos.push_back(_m_jumps_wf.size());
-        _i_jumps_wf_pos.push_back(_i2_jumps_wf.size());
+        _i_jumps_wf_pos.push_back(_i_jumps_wf.size());
+        _i2_jumps_wf_pos.push_back(_i2_jumps_wf.size());
     }
 
 
@@ -97,6 +99,15 @@ public:
      */
     Cell::CellVector &i_jumps_wf() {
         return _i_jumps_wf;
+    }
+
+    /**
+     * @brief Access the i2_jumps wavefront
+     *
+     * @return Cell::Wavefront&
+     */
+    Cell::CellVector &i2_jumps_wf() {
+        return _i2_jumps_wf;
     }
 
     /**
@@ -142,6 +153,14 @@ public:
         return _i_jumps_wf_pos[s];
     }
 
+    /**
+     * @brief Access the i2 jumps wavefront positions vector
+     *
+     */
+    int i2_jumps_wf_pos(int s) {
+        return _i2_jumps_wf_pos[s];
+    }
+
 
 private:
     static constexpr std::ptrdiff_t dense_wf_realloc_policy([[maybe_unused]] std::ptrdiff_t capacity,
@@ -158,6 +177,7 @@ private:
     std::vector<int> _m_wf_pos;
     std::vector<int> _m_jumps_wf_pos;
     std::vector<int> _i_jumps_wf_pos;
+    std::vector<int> _i2_jumps_wf_pos;
 };
 
 } // namespace theseus

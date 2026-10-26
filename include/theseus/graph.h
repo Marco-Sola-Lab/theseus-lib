@@ -324,6 +324,10 @@ public:
 
         size_t size() const { return data_.size(); }
 
+        // Underlying characters, always in forward order (data()[size() - 1 - idx]
+        // is the character idx of a reversed view)
+        const char *data() const { return data_.data(); }
+
         bool empty() const { return data_.empty(); }
 
         char operator[](size_t idx) const {

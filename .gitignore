@@ -65,3 +65,8 @@ results/*
 
 # Theseus interactive
 tests/interactive/*
+
+# Reports, report sources and benchmarks (local only)
+report/
+REPORT.md
+tests/bench/

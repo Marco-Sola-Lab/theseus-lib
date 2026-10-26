@@ -140,6 +140,20 @@ public:
             std::unordered_map<NodeId, std::string> &node_names);
 
 private:
+    // Pending I jump to a neighbour (used to cross empty vertices without recursion)
+    struct PendingIJump {
+        NodeId       node_id;
+        Cell::pos_t  prev_pos;
+        Cell::Matrix from_matrix;
+    };
+
+    // Pending diagonal to extend (stack of extend_diagonal)
+    struct ExtendState {
+        NodeId       node_id;
+        Cell::pos_t  pos;
+        Cell::Matrix from_matrix;
+    };
+
     /**
      * @brief Initialize the data for a new alignment.
      *
@@ -231,6 +245,7 @@ private:
      * @param upper_bound // Maximum value of the diagonal
      * @param curr_node_id
      */
+    template <Cell::Matrix matrix>
     void next_I(
         int upper_bound,
         NodeId curr_node_id);
@@ -243,9 +258,20 @@ private:
      * @param upper_bound // Maximum value of the diagonal
      * @param curr_node_id
      */
+    template <Cell::Matrix matrix>
     void next_D(
         int upper_bound,
         NodeId curr_node_id);
+
+    // Compile-time dispatch of the data of the gap matrices (I, I2, D and D2)
+    template <Cell::Matrix matrix>
+    Cell::CellVector &gap_wf(int score);          // Scope wavefront
+    template <Cell::Matrix matrix>
+    Scope::RangeVector &gap_pos(int score);       // Scope positions
+    template <Cell::Matrix matrix>
+    Cell::CellVector &gap_jumps_wf();             // Jumps wavefront (I and I2)
+    template <Cell::Matrix matrix>
+    std::vector<std::vector<Cell::pos_t>> &gap_jumps_positions(NodeId node_id); // Jumps positions (I and I2)
 
     /**
      * @brief Compute the next M matrix for a vertex v. This implies both sparsifying
@@ -264,39 +290,56 @@ private:
      * discovered vertices and store the jump in the neighbours.
      *
      * @param curr_node
-     * @param prev_cell
-     * @param prev_pos
-     * @param from_matrix
+     * @param jump_cell  Cell that reached the end of curr_node (passed by value)
      */
     void store_M_jump(
         NodeView curr_node,
-        Cell &prev_cell,
-        Cell::pos_t prev_pos,
-        Cell::Matrix from_matrix);
+        Cell jump_cell);
 
     /**
-     * @brief Invalidate the diagonal associated to a jump in I, activate the newly
-     * discovered vertices and store the jump in the neighbours.
+     * @brief Store an I (or I2) jump in a destination vertex. If the vertex is
+     * empty, the jump continues: its neighbours are pushed to pending.
      *
-     * @param curr_node
-     * @param prev_cell
-     * @param prev_pos
-     * @param from_matrix
+     * @tparam matrix  Cell::Matrix::I or Cell::Matrix::I2
+     * @param dest_id  Destination vertex
+     * @param prev_pos  Position of the origin cell of the gap (for the backtrace)
+     * @param from_matrix  Matrix of the origin cell of the gap
+     * @param jump_cell  Jump cell, modified in place
+     * @param pos_score  Position of the current score in the vertices data
+     * @param pending  Pending jumps through empty vertices
      */
+    template <Cell::Matrix matrix>
+    void store_I_jump_in_vertex(
+        NodeId dest_id,
+        Cell::pos_t prev_pos,
+        Cell::Matrix from_matrix,
+        Cell &jump_cell,
+        int pos_score,
+        std::vector<PendingIJump> &pending);
+
+    /**
+     * @brief Invalidate the diagonal associated to a jump in I (or I2), activate
+     * the newly discovered vertices and store the jump in the neighbours.
+     *
+     * @tparam matrix  Cell::Matrix::I or Cell::Matrix::I2
+     * @param curr_node
+     * @param jump_cell  Cell that reached the end of curr_node (passed by value)
+     */
+    template <Cell::Matrix matrix>
     void store_I_jump(
         NodeView curr_node,
-        Cell &prev_cell,
-        Cell::pos_t prev_pos,
-        Cell::Matrix from_matrix);
+        Cell jump_cell);
 
     /**
      * @brief Check and store I jumps (that is, those diagonals that have reached
-     * the last column of a vertex for matrix I).
+     * the last column of a vertex for matrix I or I2).
      *
+     * @tparam matrix  Cell::Matrix::I or Cell::Matrix::I2
      * @param curr_node
      * @param curr_wavefront
      * @param cell_range
      */
+    template <Cell::Matrix matrix>
     void check_and_store_jumps(
         NodeView curr_node,
         Cell::CellVector &curr_wavefront,
@@ -319,9 +362,11 @@ private:
      * @brief Check the end condition for the alignment.
      *
      * @param curr_data
+     * @param curr_matrix  Matrix of the cell (M or MJumps)
      */
     void check_end_condition(
-        Cell curr_data);
+        Cell curr_data,
+        Cell::Matrix curr_matrix);
 
     /**
      * @brief Exyend a given diagonal for a given vertex and perform the necessary
@@ -372,9 +417,11 @@ private:
      * @brief Perform a single step of the backtrace process.
      *
      * @param curr_cell
+     * @param curr_matrix  Matrix of the current cell (updated with the one of the previous cell)
      */
     void one_backtrace_step(
-        Cell &curr_cell);
+        Cell &curr_cell,
+        Cell::Matrix &curr_matrix);
 
     /**
      * @brief Backtrace the alignment from the end vertex to the start vertex.
@@ -410,7 +457,7 @@ private:
     std::unique_ptr<POAGraph> _poa_graph; // Partial order alignment graph for MSA
 
     bool _ends_free;
-    bool _reversed_alignment;
+    bool _reversed_alignment = false;   // Read by the printing functions before the first alignment
     int  _start_column;
     int  _seq_ID = 0;
     NodeId _start_node;
@@ -418,8 +465,11 @@ private:
     int  _start_offset;
     Cell _start_pos;
     Cell::Matrix _start_matrix;
+    int _start_score = 0;               // Internal score of the backtrace start cell
 
     std::unique_ptr<ScratchPad> _scratchpad;
+
+    std::vector<ExtendState> _extend_stack;   // Reused by extend_diagonal
 
     std::unique_ptr<Scope> _scope;
     std::unique_ptr<BeyondScope> _beyond_scope;

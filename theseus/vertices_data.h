@@ -35,7 +35,7 @@
 
 #include "cell.h"
 #include "theseus/graph.h"
-#include "theseus/penalties.h"
+#include "internal_penalties.h"
 
 
 namespace theseus {
@@ -76,10 +76,10 @@ public:
         std::vector<InvalidData> _m_invalid;
 
         std::vector<InvalidData> _i_invalid;
-        // std::vector<InvalidData> _i2_invalid;
+        std::vector<InvalidData> _i2_invalid;
 
         std::vector<InvalidData> _d_invalid;
-        // std::vector<InvalidData> _d2_invalid;
+        std::vector<InvalidData> _d2_invalid;
 
         // Scope with the positions of M jumps in the scope previous waves
         std::vector<std::vector<pos_t>> _m_jumps_positions;
@@ -88,7 +88,7 @@ public:
         std::vector<std::vector<pos_t>> _i_jumps_positions;
 
         // Scope with the positions of I2s jumps in the scope previous waves
-        // std::vector<std::vector<pos_t>> _i2_jumps_positions;
+        std::vector<std::vector<pos_t>> _i2_jumps_positions;
     };
 
     int _nscores;
@@ -100,7 +100,7 @@ public:
      * @param nscores   Number of scores of the scope.
      * @param nexpected_vertices    Number of expected vertices.
      */
-    VerticesData(const Penalties &penalties, int nscores, int nexpected_vertices) :
+    VerticesData(const InternalPenalties &penalties, int nscores, int nexpected_vertices) :
         _nscores(nscores), _penalties(penalties) {
         _active_vertices.reserve(nexpected_vertices);
         _vertex_to_idx.reserve(nexpected_vertices);
@@ -122,6 +122,7 @@ public:
             // Clear the jumps (they work as a scope)
             vdata._m_jumps_positions[pos_curr_score].clear();
             vdata._i_jumps_positions[pos_curr_score].clear();
+            vdata._i2_jumps_positions[pos_curr_score].clear();
         }
     }
 
@@ -209,18 +210,8 @@ public:
         for (long unsigned int l = 1; l < invalid_v.size(); ++l) {
             // You should compact them
             if (invalid_v[k].seg.end_d + 1 >= invalid_v[l].seg.start_d) {
-                // Update segment
-                invalid_v[k].seg.end_d = std::max(invalid_v[l].seg.end_d,
-                                                  invalid_v[k].seg.end_d);
-
-                // Update remaining down scores
-                invalid_v[k].rem_down = std::min(invalid_v[k].rem_down,
-                                                 invalid_v[l].rem_down +
-                                                     (invalid_v[l].seg.start_d -
-                                                      invalid_v[k].seg.start_d) *
-                                                         default_rem_down);
-
-                // Update remaining up scores
+                // Update remaining up scores. This must be done BEFORE updating the
+                // end of the segment, as the comparison uses the old end of k.
                 if (invalid_v[l].seg.end_d > invalid_v[k].seg.end_d) {
                     invalid_v[k].rem_up = std::min(invalid_v[l].rem_up,
                                                    invalid_v[k].rem_up +
@@ -235,6 +226,17 @@ public:
                                                         invalid_v[l].seg.end_d) *
                                                            default_rem_up);
                 }
+
+                // Update remaining down scores
+                invalid_v[k].rem_down = std::min(invalid_v[k].rem_down,
+                                                 invalid_v[l].rem_down +
+                                                     (invalid_v[l].seg.start_d -
+                                                      invalid_v[k].seg.start_d) *
+                                                         default_rem_down);
+
+                // Update segment
+                invalid_v[k].seg.end_d = std::max(invalid_v[l].seg.end_d,
+                                                  invalid_v[k].seg.end_d);
             }
             else {
                 k += 1;
@@ -276,12 +278,15 @@ public:
     void expand() {
         for (long unsigned int l = 0; l < _active_vertices.size(); ++l) {
             auto &vdata = _active_vertices[l];
-            expand_invalid_vector(vdata._m_invalid, _penalties.gape(), _penalties.gape());
-            expand_invalid_vector(vdata._i_invalid, _penalties.gape(), _penalties.gape());
-            expand_invalid_vector(vdata._d_invalid, _penalties.gape(), _penalties.gape());
+            expand_invalid_vector(vdata._m_invalid, _penalties.inse(), _penalties.dele());
+            expand_invalid_vector(vdata._i_invalid, _penalties.inse(), _penalties.dele());
+            expand_invalid_vector(vdata._d_invalid, _penalties.inse(), _penalties.dele());
 
-            // expand_invalid_vector(vdata._i2_invalid, TODO, TODO);
-            // expand_invalid_vector(vdata._d2_invalid, TODO, TODO);
+            // The growth rates of I2 and D2 are those of their own piece in the
+            // direction of the gap (up for I2, down for D2). The other direction
+            // is reached through a gap of the first piece.
+            expand_invalid_vector(vdata._i2_invalid, _penalties.inse2(), _penalties.dele());
+            expand_invalid_vector(vdata._d2_invalid, _penalties.inse(), _penalties.dele2());
         }
     }
 
@@ -292,19 +297,21 @@ public:
     void compact() {
         for (long unsigned int l = 0; l < _active_vertices.size(); ++l) {
             compact_invalid_vector(_active_vertices[l]._m_invalid,
-                                   _penalties.gape(),
-                                   _penalties.gape());
+                                   _penalties.inse(),
+                                   _penalties.dele());
             compact_invalid_vector(_active_vertices[l]._i_invalid,
-                                   _penalties.gape(),
-                                   _penalties.gape());
+                                   _penalties.inse(),
+                                   _penalties.dele());
             compact_invalid_vector(_active_vertices[l]._d_invalid,
-                                   _penalties.gape(),
-                                   _penalties.gape());
+                                   _penalties.inse(),
+                                   _penalties.dele());
 
-            // compact_invalid_vector(_active_vertices[l]._i2_invalid, TODO,
-            // TODO);
-            // compact_invalid_vector(_active_vertices[l]._d2_invalid, TODO,
-            // TODO);
+            compact_invalid_vector(_active_vertices[l]._i2_invalid,
+                                   _penalties.inse2(),
+                                   _penalties.dele());
+            compact_invalid_vector(_active_vertices[l]._d2_invalid,
+                                   _penalties.inse(),
+                                   _penalties.dele2());
         }
     }
 
@@ -317,28 +324,52 @@ public:
      */
     void invalidate_i_jump(int idx, int diag) {
         VertexData &vdata = _active_vertices[idx];
-        InvalidData new_invalid;
+        const int open_i1 = _penalties.gapo() + _penalties.inse();
+        const int open_d1 = _penalties.gapo() + _penalties.dele();
+        const int open_i2 = _penalties.gapo2() + _penalties.inse2();
+        const int open_d2 = _penalties.gapo2() + _penalties.dele2();
 
-        // New invalid in M
-        new_invalid.rem_down = _penalties.gapo() + _penalties.gape();
-        new_invalid.rem_up = _penalties.gape();
-        new_invalid.seg.start_d = diag;
-        new_invalid.seg.end_d = diag;
-        vdata._m_invalid.push_back(new_invalid);
-
-        // New invalid in I
-        new_invalid.rem_down = 2 * _penalties.gapo() + 3 * _penalties.gape();
-        new_invalid.rem_up = _penalties.gape();
-        new_invalid.seg.start_d = diag;
-        new_invalid.seg.end_d = diag;
-        vdata._i_invalid.push_back(new_invalid);
-
+        // New invalid in M and I
+        add_invalid(vdata._m_invalid, diag, diag, _penalties.inse(), open_d1);
+        add_invalid(vdata._i_invalid, diag, diag, _penalties.inse(),
+                    open_d1 + _penalties.dele() + open_i1);
         // New invalid in D (initially empty)
-        new_invalid.rem_down = _penalties.gapo() + _penalties.gape();
-        new_invalid.rem_up = _penalties.gapo() + 2 * _penalties.gape();
-        new_invalid.seg.start_d = diag;
-        new_invalid.seg.end_d = diag - 1;
-        vdata._d_invalid.push_back(new_invalid);
+        add_invalid(vdata._d_invalid, diag, diag - 1, _penalties.inse() + open_d1, open_d1);
+
+        if (_penalties.is_dual()) {
+            // The I jump does not dominate the I2/D2 states (they extend cheaper),
+            // so these segments start empty. Reaching I2 (D2) from the jump means
+            // closing the gap and opening a new gap of the second piece.
+            add_invalid(vdata._i2_invalid, diag + 1, diag, open_i2, open_d1 + open_i2);
+            add_invalid(vdata._d2_invalid, diag, diag - 1, _penalties.inse() + open_d2, open_d2);
+        }
+    }
+
+    /**
+     * @brief Invalidate a diagonal "diag" in vertex located at index "idx" and
+     * for matrix I2. This happens when a jump is performed in the I2 matrix.
+     * Dual affine only. The I2 state dominates M, I and I2 (its extension is the
+     * cheapest one), but not the D states.
+     *
+     * @param idx
+     * @param diag
+     */
+    void invalidate_i2_jump(int idx, int diag) {
+        VertexData &vdata = _active_vertices[idx];
+        const int open_i1 = _penalties.gapo() + _penalties.inse();
+        const int open_d1 = _penalties.gapo() + _penalties.dele();
+        const int open_i2 = _penalties.gapo2() + _penalties.inse2();
+        const int open_d2 = _penalties.gapo2() + _penalties.dele2();
+
+        // New invalid in M, I and I2
+        add_invalid(vdata._m_invalid, diag, diag, _penalties.inse2(), open_d1);
+        add_invalid(vdata._i_invalid, diag, diag, open_i1,
+                    open_d1 + _penalties.dele() + open_i1);
+        add_invalid(vdata._i2_invalid, diag, diag, _penalties.inse2(),
+                    open_d1 + _penalties.dele() + open_i2);
+        // New invalid in D and D2 (initially empty)
+        add_invalid(vdata._d_invalid, diag, diag - 1, _penalties.inse2() + open_d1, open_d1);
+        add_invalid(vdata._d2_invalid, diag, diag - 1, _penalties.inse2() + open_d2, open_d2);
     }
 
     /**
@@ -350,28 +381,23 @@ public:
      */
     void invalidate_m_jump(int idx, int diag) {
         VertexData &vdata = _active_vertices[idx];
-        InvalidData new_invalid;
+        const int open_i1 = _penalties.gapo() + _penalties.inse();
+        const int open_d1 = _penalties.gapo() + _penalties.dele();
+        const int open_i2 = _penalties.gapo2() + _penalties.inse2();
+        const int open_d2 = _penalties.gapo2() + _penalties.dele2();
 
         // New invalid in M
-        new_invalid.rem_down = _penalties.gapo() + _penalties.gape();
-        new_invalid.rem_up = _penalties.gapo() + _penalties.gape();
-        new_invalid.seg.start_d = diag;
-        new_invalid.seg.end_d = diag;
-        vdata._m_invalid.push_back(new_invalid);
+        add_invalid(vdata._m_invalid, diag, diag, open_i1, open_d1);
+        // New invalid in I and D (initially empty)
+        add_invalid(vdata._i_invalid, diag + 1, diag, open_i1, open_d1 + open_i1);
+        add_invalid(vdata._d_invalid, diag, diag - 1, open_i1 + open_d1, open_d1);
 
-        // New invalid in I (initially empty)
-        new_invalid.rem_down = 2 * (_penalties.gapo() + _penalties.gape());
-        new_invalid.rem_up = _penalties.gapo() + _penalties.gape();
-        new_invalid.seg.start_d = diag + 1;
-        new_invalid.seg.end_d = diag;
-        vdata._i_invalid.push_back(new_invalid);
-
-        // New invalid in D (initially empty)
-        new_invalid.rem_down = _penalties.gapo() + _penalties.gape();
-        new_invalid.rem_up = 2 * (_penalties.gapo() + _penalties.gape());
-        new_invalid.seg.start_d = diag;
-        new_invalid.seg.end_d = diag - 1;
-        vdata._d_invalid.push_back(new_invalid);
+        if (_penalties.is_dual()) {
+            // I2 and D2 start empty. They are reached by a gap of the second piece
+            // (preceded by a gap of the first piece if it goes in the other direction)
+            add_invalid(vdata._i2_invalid, diag + 1, diag, open_i2, open_d1 + open_i2);
+            add_invalid(vdata._d2_invalid, diag, diag - 1, open_i1 + open_d2, open_d2);
+        }
     }
 
     /**
@@ -397,12 +423,12 @@ public:
             else if constexpr (matrix == Cell::Matrix::D) {
                 return vdata._d_invalid;
             }
-            // else if constexpr (matrix == Cell::Matrix::I2) {
-            //     return vdata._i2_invalid;
-            // }
-            // else if constexpr (matrix == Cell::Matrix::D2) {
-            //     return vdata._d2_invalid;
-            // }
+            else if constexpr (matrix == Cell::Matrix::I2) {
+                return vdata._i2_invalid;
+            }
+            else if constexpr (matrix == Cell::Matrix::D2) {
+                return vdata._d2_invalid;
+            }
             else {
                 static_assert([]{ return false; }(), "Unsupported matrix type");
             }
@@ -441,6 +467,7 @@ public:
             _active_vertices.push_back(VertexData());
             _active_vertices[_active_vertices.size() - 1].vertex_id = vtx;
             _active_vertices[_active_vertices.size() - 1]._i_jumps_positions.resize(_nscores);
+            _active_vertices[_active_vertices.size() - 1]._i2_jumps_positions.resize(_nscores);
             _active_vertices[_active_vertices.size() - 1]._m_jumps_positions.resize(_nscores);
 
             // Determine the vertex id
@@ -449,7 +476,24 @@ public:
     }
 
 private:
-    const Penalties &_penalties;
+    /**
+     * @brief Add a new invalid segment [start_d, end_d] to an invalid vector.
+     *
+     */
+    static void add_invalid(std::vector<InvalidData> &invalid_v,
+                            int start_d,
+                            int end_d,
+                            int rem_up,
+                            int rem_down) {
+        InvalidData new_invalid;
+        new_invalid.seg.start_d = start_d;
+        new_invalid.seg.end_d = end_d;
+        new_invalid.rem_up = rem_up;
+        new_invalid.rem_down = rem_down;
+        invalid_v.push_back(new_invalid);
+    }
+
+    const InternalPenalties &_penalties;
 
     std::vector<VertexData> _active_vertices;
 

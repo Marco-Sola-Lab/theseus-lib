@@ -9,6 +9,7 @@
     * [Multiple Sequence Alignment (MSA)](#msa_usage)
     * [Aligning a sequence to a graph](#alignment_usage)
     * [Creating a graph](#graph_creation)
+    * [Penalties and dual-affine gaps](#penalties_usage)
 * [Tools](#theseus_tools)
 * [Heuristics](#theseus_heuristics)
 * [Datasets](#theseus_datasets)
@@ -135,6 +136,27 @@ graph.add_edge(id_node1, id_node2);
 ```
 
 
+### <a name="penalties_usage"></a> 2.4. Penalties and dual-affine gaps
+
+Theseus works with minimization penalties: the match penalty is the lowest one (0 by default, it can also be positive) and the rest are higher-valued. By default, gaps are scored with a single affine function, where a gap of length `k` costs `gap_open + k * gap_extend`:
+```
+theseus::Penalties penalties(match, mismatch, gap_open, gap_extend);
+```
+
+Theseus also supports **dual-affine gaps** (two-piece affine gaps). In this case the gap function has two pieces, and a gap of length `k` costs the cheapest of them:
+```
+min(gap_open + k * gap_extend, gap_open2 + k * gap_extend2)
+```
+The first piece is cheaper for short gaps (lower opening but higher extension), and the second one for long gaps (higher opening but lower extension). To use it, give the second piece to the `Penalties` constructor:
+```
+theseus::Penalties penalties(match, mismatch, gap_open, gap_extend, gap_open2, gap_extend2);
+```
+The second piece must satisfy `gap_open2 >= gap_open` and `match < gap_extend2 <= gap_extend`, otherwise the aligner throws an `std::invalid_argument` exception. The penalties object is the only thing to change: the rest of the code (MSA, alignment to a graph, tools) is used as before.
+
+In the command line tools (see [Tools](#theseus_tools)), the second piece is set with `-O/--gapo2` and `-E/--gape2`, which must be given together.
+
+The score of an alignment according to these penalties is available in `alignment.score`.
+
 ## <a name="theseus_tools"></a> 3.Tools
 
 The Theseus library implements two minimal tools to use the Theseus algorithm on the consensus generation context. It is important to note that these tools are not production ready.
@@ -154,6 +176,8 @@ Usage: theseus_msa [OPTIONS]
                    -x, --mismatch <int>        The mismatch penalty                                    [default=2]
                    -o, --gapo <int>            The gap open penalty                                    [default=3]
                    -e, --gape <int>            The gap extension penalty                               [default=1]
+                   -O, --gapo2 <int>           The second gap open penalty (dual affine)               [default=none]
+                   -E, --gape2 <int>           The second gap extension penalty (dual affine)          [default=none]
                    -t, --output_type <int>     The output format of the multiple alignment             [default=0=MSA]
                                                 0: MSA: Standard Multiple Sequence Alignment format,
                                                 1: GFA: Output the resulting POA graph in GFA format,
@@ -203,6 +227,8 @@ Usage: theseus_aligner [OPTIONS]
                    -x, --mismatch <int>         The mismatch penalty                                    [default=2]
                    -o, --gapo <int>             The gap open penalty                                    [default=3]
                    -e, --gape <int>             The gap extension penalty                               [default=1]
+                   -O, --gapo2 <int>            The second gap open penalty (dual affine)               [default=none]
+                   -E, --gape2 <int>            The second gap extension penalty (dual affine)          [default=none]
 
                    I/O:
                    -g, --graph_file <file>      Graph file in .gfa format                               [Required]

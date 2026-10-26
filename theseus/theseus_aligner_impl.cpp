@@ -26,6 +26,8 @@
  */
 
 
+#include <bit>
+#include <cstring>
 #include <string_view>
 #include "theseus_aligner_impl.h"
 
@@ -41,9 +43,11 @@ TheseusAlignerImpl::TheseusAlignerImpl(const Penalties &penalties,
                                                        _graph(std::move(graph)),
                                                        _is_msa(is_msa),
                                                        _seq("", false) {
-    // TODO: Gap-linear and dual affine-gap.
-    const auto n_scores = std::max({_internal_penalties.gapo() +_internal_penalties.gape(),
-                                  _internal_penalties.gapo() +_internal_penalties.gape(),
+    // TODO: Gap-linear
+    const auto n_scores = std::max({_internal_penalties.gapo() +_internal_penalties.dele(),
+                                  _internal_penalties.gapo() +_internal_penalties.inse(),
+                                  _internal_penalties.gapo2() +_internal_penalties.dele2(),
+                                  _internal_penalties.gapo2() +_internal_penalties.inse2(),
                                   _internal_penalties.mism()}) + 1;
 
     // POA graph for MSA
@@ -57,7 +61,7 @@ TheseusAlignerImpl::TheseusAlignerImpl(const Penalties &penalties,
     _scope = std::make_unique<Scope>(n_scores);
     _beyond_scope = std::make_unique<BeyondScope>();
     constexpr int expected_nvertices = std::max(1024, 0); // TODO: Set the expected number of vertices
-    _vertices_data = std::make_unique<VerticesData>(penalties, n_scores, expected_nvertices);
+    _vertices_data = std::make_unique<VerticesData>(_internal_penalties, n_scores, expected_nvertices);
     _scratchpad = std::make_unique<ScratchPad>(-1024, 1024);
 }
 
@@ -99,7 +103,7 @@ void TheseusAlignerImpl::new_alignment(SequenceView seq,
     // Set initial alignment status
     _alignment.theseus_status = THESEUS_STATUS_OK;
     // Set heuristics
-    _heuristics.new_alignment(_internal_penalties.gape(), _seq.size(), density_drop_active, lag_pruning_active);
+    _heuristics.new_alignment(std::max(_internal_penalties.inse(), _internal_penalties.dele()), _seq.size(), density_drop_active, lag_pruning_active);
     // TODO: Allow for different initial conditions. Now only global alignment.
     Cell init_condition;
     init_condition.offset    = 0;
@@ -113,6 +117,7 @@ void TheseusAlignerImpl::new_alignment(SequenceView seq,
     // Alignment data
     _alignment.path.clear();
     _alignment.edit_op.clear();
+    _alignment.score = 0;
 }
 
 
@@ -121,24 +126,45 @@ void TheseusAlignerImpl::process_vertex(NodeId curr_node_id) {
 
   // Next
   int upper_bound = _graph.node_size(curr_node_id);
-  next_I(upper_bound, curr_node_id);
+  const bool dual = _internal_penalties.is_dual();
+  next_I<Cell::Matrix::I>(upper_bound, curr_node_id);
   _scratchpad->reset();
-  next_D(upper_bound, curr_node_id);
+  if (dual) {
+    next_I<Cell::Matrix::I2>(upper_bound, curr_node_id);
+    _scratchpad->reset();
+  }
+  next_D<Cell::Matrix::D>(upper_bound, curr_node_id);
   _scratchpad->reset();
+  if (dual) {
+    next_D<Cell::Matrix::D2>(upper_bound, curr_node_id);
+    _scratchpad->reset();
+  }
   next_M(upper_bound, curr_node_id);
   _scratchpad->reset();
-  // Extend
+  // Extend. The vertex is fetched once and the diagonals that do not reach the
+  // end of the vertex are extended in place (common case). Only those reaching
+  // the end go through extend_diagonal, which performs the jumps.
   int v_pos = _vertices_data->get_id(curr_node_id);
   Scope::range cells_range = _scope->m_pos(_score)[v_pos];
+  NodeView curr_node = get_node(curr_node_id);
+  const int n = curr_node.sequence.size();
   for (Cell::pos_t idx = cells_range.start; idx < cells_range.end; ++idx) {
-    extend_diagonal(curr_node_id, idx, Cell::Matrix::M);
+    // Local node extension
+    Cell &cell = _beyond_scope->m_wf()[idx];  // Jumps never reallocate m_wf
+    int j = cell.diag + cell.offset;
+    LCP(curr_node, cell.offset, j);
+    // If the diagonal reaches the end of the vertex, we need to jump to the
+    // next vertices
+    if (j == n) extend_diagonal(curr_node_id, idx, Cell::Matrix::M);
+    else check_end_condition(cell, Cell::Matrix::M);
   }
 }
 
 
 void TheseusAlignerImpl::compute_new_wave() {
-  // Update invalid segments
-  _vertices_data->expand();
+  // Update invalid segments. At score 0 the first jumps have just been created by
+  // the initial extend (before this call), so the rem counters are already correct.
+  if (_score > 0) _vertices_data->expand();
   _vertices_data->compact();
   // Process all active vertices
   int num_active_vertices = _vertices_data->num_active_vertices();
@@ -211,6 +237,7 @@ Alignment TheseusAlignerImpl::align(
   // Backtrace
   _seq_ID += 1;
   if (_alignment.theseus_status == THESEUS_STATUS_ALG_COMPLETED) {
+    _start_score = _score;
     backtrace();
     if (_is_msa) {
       // Compute the end column of the alignment in the POA graph
@@ -326,29 +353,66 @@ Alignment TheseusAlignerImpl::align(
     }
   }
 
-  // Compute next I matrix
+  // Data of the gap matrices, selected at compile time
+  template <Cell::Matrix matrix>
+  Cell::CellVector &TheseusAlignerImpl::gap_wf(int score) {
+    if constexpr (matrix == Cell::Matrix::I)       return _scope->i_wf(score);
+    else if constexpr (matrix == Cell::Matrix::I2) return _scope->i2_wf(score);
+    else if constexpr (matrix == Cell::Matrix::D)  return _scope->d_wf(score);
+    else                                           return _scope->d2_wf(score);
+  }
+
+  template <Cell::Matrix matrix>
+  Scope::RangeVector &TheseusAlignerImpl::gap_pos(int score) {
+    if constexpr (matrix == Cell::Matrix::I)       return _scope->i_pos(score);
+    else if constexpr (matrix == Cell::Matrix::I2) return _scope->i2_pos(score);
+    else if constexpr (matrix == Cell::Matrix::D)  return _scope->d_pos(score);
+    else                                           return _scope->d2_pos(score);
+  }
+
+  template <Cell::Matrix matrix>
+  Cell::CellVector &TheseusAlignerImpl::gap_jumps_wf() {
+    if constexpr (matrix == Cell::Matrix::I) return _beyond_scope->i_jumps_wf();
+    else                                     return _beyond_scope->i2_jumps_wf();
+  }
+
+  template <Cell::Matrix matrix>
+  std::vector<std::vector<Cell::pos_t>> &TheseusAlignerImpl::gap_jumps_positions(NodeId node_id) {
+    if constexpr (matrix == Cell::Matrix::I) return _vertices_data->get_vertex_data(node_id)._i_jumps_positions;
+    else                                     return _vertices_data->get_vertex_data(node_id)._i2_jumps_positions;
+  }
+
+  // Compute next I (or I2) matrix
+  template <Cell::Matrix matrix>
   void TheseusAlignerImpl::next_I(int upper_bound,
                                   NodeId curr_node_id)
   {
+    // Penalties of the gap piece (I: first piece, I2: second piece)
+    constexpr bool second = (matrix == Cell::Matrix::I2);
+    const int gapo = second ? _internal_penalties.gapo2() : _internal_penalties.gapo();
+    const int inse = second ? _internal_penalties.inse2() : _internal_penalties.inse();
+    const int v_id = _vertices_data->get_id(curr_node_id);
     // Sparsify data (put it in the scratch pad)
-    int pos_prev_M = _score - (_internal_penalties.gapo() + _internal_penalties.gape()), pos_prev_I = _score - _internal_penalties.gape(), pos_prev_M_scope = _vertices_data->get_pos(pos_prev_M);
-    int pos_prev_I_scope = _vertices_data->get_pos(pos_prev_I);
+    int pos_prev_M = _score - (gapo + inse),
+        pos_prev_I = _score - inse;
+    int pos_prev_M_scope = _vertices_data->get_pos(pos_prev_M),
+        pos_prev_I_scope = _vertices_data->get_pos(pos_prev_I);
     // Come from an Insertion
     if (pos_prev_I >= 0) {
-      if (_scope->i_pos(pos_prev_I).size() > _vertices_data->get_id(curr_node_id))
+      if (gap_pos<matrix>(pos_prev_I).size() > v_id)
       {
-        Scope::range cells_range = _scope->i_pos(pos_prev_I)[_vertices_data->get_id(curr_node_id)];
-        sparsify_indel_data(_scope->i_wf(pos_prev_I), 0, 1, cells_range, _seq.size(), upper_bound); // Sparsify I data
+        Scope::range cells_range = gap_pos<matrix>(pos_prev_I)[v_id];
+        sparsify_indel_data(gap_wf<matrix>(pos_prev_I), 0, 1, cells_range, _seq.size(), upper_bound); // Sparsify I data
       };
       sparsify_jumps_data(
-        _beyond_scope->i_jumps_wf(),
-        _vertices_data->get_vertex_data(curr_node_id)._i_jumps_positions[pos_prev_I_scope],
-        0, 1, _seq.size(), upper_bound, Cell::Matrix::IJumps);
+        gap_jumps_wf<matrix>(),
+        gap_jumps_positions<matrix>(curr_node_id)[pos_prev_I_scope],
+        0, 1, _seq.size(), upper_bound, second ? Cell::Matrix::I2Jumps : Cell::Matrix::IJumps);
     }
     // Come from M
     if (pos_prev_M >= 0) {
-      if (_scope->m_pos(pos_prev_M).size() > _vertices_data->get_id(curr_node_id)) {
-        Scope::range cells_range = _scope->m_pos(pos_prev_M)[_vertices_data->get_id(curr_node_id)];
+      if (_scope->m_pos(pos_prev_M).size() > v_id) {
+        Scope::range cells_range = _scope->m_pos(pos_prev_M)[v_id];
         sparsify_M_data(_beyond_scope->m_wf(), 0, 1, cells_range, _seq.size(), upper_bound); // Sparsify M data
       }
       sparsify_jumps_data(_beyond_scope->m_jumps_wf(),
@@ -357,42 +421,48 @@ Alignment TheseusAlignerImpl::align(
     }
     // Densify data (store it in the big wavefront)
     Scope::range new_range;
-    new_range.start = _scope->i_wf(_score).size();
+    new_range.start = gap_wf<matrix>(_score).size();
     for (auto diag : _scratchpad->active_diags()) {
-      if (_vertices_data->valid_diagonal<Cell::Matrix::I>(curr_node_id, diag)
+      if (_vertices_data->valid_diagonal<matrix>(curr_node_id, diag)
       && !_heuristics.check_local_heuristics((*_scratchpad)[diag].offset)) {
-        _scope->i_wf(_score).push_back((*_scratchpad)[diag]);     // Store Cell
+        gap_wf<matrix>(_score).push_back((*_scratchpad)[diag]);     // Store Cell
       }
     }
-    new_range.end = _scope->i_wf(_score).size();
-    _scope->i_pos(_score).push_back(new_range);
+    new_range.end = gap_wf<matrix>(_score).size();
+    gap_pos<matrix>(_score).push_back(new_range);
     // Check, store and invalidate new I jumps
     if (has_out_nodes(curr_node_id)) {
       NodeView curr_node = get_node(curr_node_id);
-      check_and_store_jumps(curr_node, _scope->i_wf(_score), new_range);
+      check_and_store_jumps<matrix>(curr_node, gap_wf<matrix>(_score), new_range);
     }
 }
 
 
-// Compute next D matrix
+// Compute next D (or D2) matrix
+template <Cell::Matrix matrix>
 void TheseusAlignerImpl::next_D(int upper_bound,
                                 NodeId curr_node_id)
 {
+  // Penalties of the gap piece (D: first piece, D2: second piece)
+  constexpr bool second = (matrix == Cell::Matrix::D2);
+  const int gapo = second ? _internal_penalties.gapo2() : _internal_penalties.gapo();
+  const int dele = second ? _internal_penalties.dele2() : _internal_penalties.dele();
+  const int v_id = _vertices_data->get_id(curr_node_id);
   // Sparsify data (put it in the scratch pad)
-  int pos_prev_M = _score - (_internal_penalties.gapo() + _internal_penalties.gape()),
-      pos_prev_D = _score - _internal_penalties.gape(),
+  int pos_prev_M = _score - (gapo + dele),
+      pos_prev_D = _score - dele,
       pos_prev_M_scope = _vertices_data->get_pos(pos_prev_M);
   // Come from a Deletion
-  if (pos_prev_D >= 0 && _scope->d_pos(pos_prev_D).size() > _vertices_data->get_id(curr_node_id))
+  if (pos_prev_D >= 0 && gap_pos<matrix>(pos_prev_D).size() > v_id)
   {
-    Scope::range cells_range = _scope->d_pos(pos_prev_D)[_vertices_data->get_id(curr_node_id)];
-    sparsify_indel_data(_scope->d_wf(pos_prev_D), 1, -1, cells_range, _seq.size(), upper_bound);
+    Scope::range cells_range = gap_pos<matrix>(pos_prev_D)[v_id];
+    sparsify_indel_data(gap_wf<matrix>(pos_prev_D), 1, -1, cells_range, _seq.size(), upper_bound);
   }
   // Come from M
   if (pos_prev_M >= 0) {
-    if (_scope->m_pos(pos_prev_M).size() > _vertices_data->get_id(curr_node_id))
+    if (_scope->m_pos(pos_prev_M).size() > v_id)
     {
-      Scope::range cells_range = _scope->m_pos(pos_prev_M)[_vertices_data->get_id(curr_node_id)];
+      Scope::range cells_range = _scope->m_pos(pos_prev_M)[v_id];
       sparsify_M_data(_beyond_scope->m_wf(), 1, -1, cells_range, _seq.size(), upper_bound); // Sparsify M data
     }
     sparsify_jumps_data(_beyond_scope->m_jumps_wf(),
@@ -401,15 +471,15 @@ void TheseusAlignerImpl::next_D(int upper_bound,
   }
   // Densify data (store it in the big wavefront)
   Scope::range new_range;
-  new_range.start = _scope->d_wf(_score).size();
+  new_range.start = gap_wf<matrix>(_score).size();
   for (auto diag : _scratchpad->active_diags()) {
-    if (_vertices_data->valid_diagonal<Cell::Matrix::D>(curr_node_id, diag)
+    if (_vertices_data->valid_diagonal<matrix>(curr_node_id, diag)
     && !_heuristics.check_local_heuristics((*_scratchpad)[diag].offset)) {
-      _scope->d_wf(_score).push_back((*_scratchpad)[diag]); // Store Cell
+      gap_wf<matrix>(_score).push_back((*_scratchpad)[diag]); // Store Cell
     }
   }
-  new_range.end = _scope->d_wf(_score).size();
-  _scope->d_pos(_score).push_back(new_range);
+  new_range.end = gap_wf<matrix>(_score).size();
+  gap_pos<matrix>(_score).push_back(new_range);
 }
 
 
@@ -430,6 +500,17 @@ void TheseusAlignerImpl::next_M(int upper_bound,
   if (_scope->i_pos(pos_prev_I).size() > _vertices_data->get_id(curr_node_id))  {
     Scope::range cells_range = _scope->i_pos(pos_prev_I)[_vertices_data->get_id(curr_node_id)];
     sparsify_indel_data(_scope->i_wf(pos_prev_I), 0, 0, cells_range, _seq.size(), upper_bound);
+  }
+  // Come from the second piece of the gaps (dual affine)
+  if (_internal_penalties.is_dual()) {
+    if (_scope->d2_pos(pos_prev_D).size() > _vertices_data->get_id(curr_node_id))  {
+      Scope::range cells_range = _scope->d2_pos(pos_prev_D)[_vertices_data->get_id(curr_node_id)];
+      sparsify_indel_data(_scope->d2_wf(pos_prev_D), 0, 0, cells_range, _seq.size(), upper_bound);
+    }
+    if (_scope->i2_pos(pos_prev_I).size() > _vertices_data->get_id(curr_node_id))  {
+      Scope::range cells_range = _scope->i2_pos(pos_prev_I)[_vertices_data->get_id(curr_node_id)];
+      sparsify_indel_data(_scope->i2_wf(pos_prev_I), 0, 0, cells_range, _seq.size(), upper_bound);
+    }
   }
   // Come from M
   if (pos_prev_M >= 0) {
@@ -455,94 +536,122 @@ void TheseusAlignerImpl::next_M(int upper_bound,
 }
 
 
-// Store the jump in neighbours
+// Store the jump in neighbours. "jump_cell" is the cell that reached the end of
+// its vertex (a copy, as the underlying vectors might be reallocated)
 void TheseusAlignerImpl::store_M_jump(NodeView curr_node,
-                                      Cell &prev_cell,
-                                      Cell::pos_t prev_pos,
-                                      Cell::Matrix from_matrix) {
+                                      Cell jump_cell) {
   // Invalidate the jumping diagonal
-  // if (_seq_ID >= 2653 && prev_cell.vertex_id == 351) {
-  //    std::cout << "Invalidating diag " << prev_cell.diag << " in vertex " << prev_cell.vertex_id << std::endl;
-  //    int vertex_id = _vertices_data->get_id(prev_cell.vertex_id);
-  // }
-  _vertices_data->invalidate_m_jump(_vertices_data->get_id(prev_cell.vertex_id), prev_cell.diag);
+  _vertices_data->invalidate_m_jump(_vertices_data->get_id(jump_cell.vertex_id), jump_cell.diag);
   int pos_score = _vertices_data->get_pos(_score);
-  int new_diag  = -prev_cell.offset;
-  Cell new_cell = prev_cell;
-  new_cell.from_matrix = from_matrix;
-  new_cell.prev_pos = prev_pos;
+  // The jump cell keeps from_matrix and prev_pos (the origin of the gap) for the backtrace
+  jump_cell.diag = -jump_cell.offset;
   // For each neighbour, store the jump and metadata
   for (auto out_node_id : curr_node.out_nodes) {
-    new_cell.vertex_id = out_node_id;
-    new_cell.diag = new_diag;
-    NodeView out_node = get_node(out_node_id);
-    _vertices_data->activate_vertex(new_cell.vertex_id);
+    jump_cell.vertex_id = out_node_id;
+    _vertices_data->activate_vertex(jump_cell.vertex_id);
     // Store jump and metadata
-    bool valid_diag = _vertices_data->valid_diagonal<Cell::Matrix::M>(new_cell.vertex_id, new_cell.diag);
+    bool valid_diag = _vertices_data->valid_diagonal<Cell::Matrix::M>(jump_cell.vertex_id, jump_cell.diag);
     // Extend only if it has not yet been visited
     if (valid_diag) {
       int pos_new_cell = _beyond_scope->m_jumps_wf().size();
-      _beyond_scope->m_jumps_wf().push_back(new_cell);
-      _vertices_data->get_vertex_data(new_cell.vertex_id)._m_jumps_positions[pos_score].push_back(pos_new_cell);
+      _beyond_scope->m_jumps_wf().push_back(jump_cell);
+      _vertices_data->get_vertex_data(jump_cell.vertex_id)._m_jumps_positions[pos_score].push_back(pos_new_cell);
+      // The new M cell (start of the neighbour) must be extended and checked
       extend_diagonal(out_node_id, pos_new_cell, Cell::Matrix::MJumps);
     }
   }
 }
 
 
-// Store the jump in neighbours
-void TheseusAlignerImpl::store_I_jump(
-    NodeView curr_node,
-    Cell& prev_cell,
+// Store the jump in a destination vertex. If the destination is empty, its
+// neighbours are added to the pending jumps
+template <Cell::Matrix matrix>
+void TheseusAlignerImpl::store_I_jump_in_vertex(
+    NodeId dest_id,
     Cell::pos_t prev_pos,
-    Cell::Matrix from_matrix)
+    Cell::Matrix from_matrix,
+    Cell &jump_cell,
+    int pos_score,
+    std::vector<PendingIJump> &pending)
 {
-  // Invalidate the jumping diagonal
-  _vertices_data->invalidate_i_jump(_vertices_data->get_id(prev_cell.vertex_id), prev_cell.diag);
-  int pos_score = _vertices_data->get_pos(_score);
-  int new_diag = -prev_cell.offset;
-  Cell new_cell = prev_cell;
-  new_cell.from_matrix = from_matrix;
-  new_cell.prev_pos = prev_pos;
-  // For each neighbour, store the jump and metadata
-  for (auto out_node_id : curr_node.out_nodes) {
-    new_cell.vertex_id = out_node_id;
-    new_cell.diag = new_diag;
-    _vertices_data->activate_vertex(new_cell.vertex_id);
-    bool valid_diag = _vertices_data->valid_diagonal<Cell::Matrix::I>(new_cell.vertex_id, new_cell.diag);
-    // Extend only if it has not yet been visited
-    if (valid_diag) {
-      int pos_new_cell = _beyond_scope->i_jumps_wf().size();
-      _beyond_scope->i_jumps_wf().push_back(new_cell);
-      _vertices_data->get_vertex_data(new_cell.vertex_id)._i_jumps_positions[pos_score].push_back(pos_new_cell);
-      // If the destination vertex is empty, jump again
-      if (curr_node.sequence.empty()) {
-        store_I_jump(curr_node, _beyond_scope->i_jumps_wf()[pos_new_cell], prev_pos, Cell::Matrix::IJumps);
+  constexpr Cell::Matrix jumps_matrix = (matrix == Cell::Matrix::I2) ? Cell::Matrix::I2Jumps : Cell::Matrix::IJumps;
+  jump_cell.vertex_id   = dest_id;
+  jump_cell.prev_pos    = prev_pos;
+  jump_cell.from_matrix = from_matrix;
+  _vertices_data->activate_vertex(dest_id);
+  bool valid_diag = _vertices_data->valid_diagonal<matrix>(dest_id, jump_cell.diag);
+  // Extend only if it has not yet been visited
+  if (valid_diag) {
+    int pos_new_cell = gap_jumps_wf<matrix>().size();
+    gap_jumps_wf<matrix>().push_back(jump_cell);
+    gap_jumps_positions<matrix>(dest_id)[pos_score].push_back(pos_new_cell);
+    // If the destination vertex is empty, jump again
+    NodeView dest_node = get_node(dest_id);
+    if (dest_node.sequence.empty() && has_out_nodes(dest_id)) {
+      if constexpr (matrix == Cell::Matrix::I2) {
+        _vertices_data->invalidate_i2_jump(_vertices_data->get_id(dest_id), jump_cell.diag);
+      }
+      else {
+        _vertices_data->invalidate_i_jump(_vertices_data->get_id(dest_id), jump_cell.diag);
+      }
+      for (auto next_node_id : dest_node.out_nodes) {
+        pending.push_back({next_node_id, pos_new_cell, jumps_matrix});
       }
     }
   }
 }
 
 
-// Check and store I jumps (that is, those diagonals that have reached the last column of a vertex)
+// Store the jump in neighbours (insertion that continues in the neighbours)
+template <Cell::Matrix matrix>
+void TheseusAlignerImpl::store_I_jump(
+    NodeView curr_node,
+    Cell jump_cell)
+{
+  // Invalidate the jumping diagonal
+  if constexpr (matrix == Cell::Matrix::I2) {
+    _vertices_data->invalidate_i2_jump(_vertices_data->get_id(jump_cell.vertex_id), jump_cell.diag);
+  }
+  else {
+    _vertices_data->invalidate_i_jump(_vertices_data->get_id(jump_cell.vertex_id), jump_cell.diag);
+  }
+  int pos_score = _vertices_data->get_pos(_score);
+  jump_cell.diag = -jump_cell.offset;
+  // If a destination vertex is empty the insertion keeps going through it, so its
+  // neighbours become pending jumps (explicit stack instead of recursion). The
+  // cell stored in the empty vertex is the origin of the next one. The vector only
+  // allocates memory if there are empty vertices.
+  std::vector<PendingIJump> pending;
+  // For each neighbour, store the jump and metadata
+  const Cell::pos_t origin_pos = jump_cell.prev_pos;
+  const Cell::Matrix origin_matrix = jump_cell.from_matrix;
+  for (auto out_node_id : curr_node.out_nodes) {
+    store_I_jump_in_vertex<matrix>(out_node_id, origin_pos, origin_matrix, jump_cell, pos_score, pending);
+  }
+  // Pending jumps through empty vertices
+  while (!pending.empty()) {
+    PendingIJump curr_jump = pending.back();
+    pending.pop_back();
+    store_I_jump_in_vertex<matrix>(curr_jump.node_id, curr_jump.prev_pos, curr_jump.from_matrix, jump_cell, pos_score, pending);
+  }
+}
+
+
+// Check and store I (or I2) jumps (that is, those diagonals that have reached the last column of a vertex)
+template <Cell::Matrix matrix>
 void TheseusAlignerImpl::check_and_store_jumps(
     NodeView curr_node,
     Cell::CellVector &curr_wavefront,
     Scope::range cell_range)
 {
-  Cell::pos_t len = cell_range.end - cell_range.start, n = curr_node.sequence.size(), prev_pos;
-  Cell::idx2d_t diag, offset, curr_j;
-  Cell::Matrix from_matrix;
+  Cell::pos_t len = cell_range.end - cell_range.start, n = curr_node.sequence.size();
   // Check all diagonals in the current wavefront
   for (int l = 0; l < len; ++l) {
-    diag = curr_wavefront[cell_range.start + l].diag;
-    offset = curr_wavefront[cell_range.start + l].offset;
-    curr_j = diag + offset;
-    if (curr_j == n && offset <= (int)_seq.size()) {
-      from_matrix = curr_wavefront[cell_range.start + l].from_matrix;
-      prev_pos = curr_wavefront[cell_range.start + l].prev_pos;
-      store_M_jump(curr_node, curr_wavefront[cell_range.start + l], prev_pos, from_matrix);
-      store_I_jump(curr_node, curr_wavefront[cell_range.start + l], prev_pos, from_matrix);
+    const Cell cell = curr_wavefront[cell_range.start + l];
+    // Reached the end of the vertex
+    if (cell.diag + cell.offset == n && cell.offset <= (int)_seq.size()) {
+      store_M_jump(curr_node, cell);
+      store_I_jump<matrix>(curr_node, cell);
     }
   }
 }
@@ -557,7 +666,30 @@ void TheseusAlignerImpl::LCP(
   // Find LCP
   int len_seq_1 = _seq.size();
   int len_seq_2 = curr_node.sequence.size();
-  // std::cout << query[offset] << " " << curr_node.sequence[j] << std::endl;
+  // Compare 8 characters at a time: the first different byte of the XOR of the
+  // two blocks is the first mismatch. In a reversed view, the next 8 characters
+  // are the 8 bytes before the current position, in reverse order.
+  if constexpr (std::endian::native == std::endian::little) {
+    const char *seq_1 = _seq.data(), *seq_2 = curr_node.sequence.data();
+    const bool reversed = _seq.is_reversed();
+    if (reversed == curr_node.sequence.is_reversed()) {
+      while (offset + 8 <= len_seq_1 && j + 8 <= len_seq_2) {
+        uint64_t block_1, block_2;
+        std::memcpy(&block_1, reversed ? seq_1 + len_seq_1 - 8 - offset : seq_1 + offset, 8);
+        std::memcpy(&block_2, reversed ? seq_2 + len_seq_2 - 8 - j : seq_2 + j, 8);
+        const uint64_t diff = block_1 ^ block_2;
+        if (diff != 0) {
+          const int equal = (reversed ? std::countl_zero(diff) : std::countr_zero(diff)) / 8;
+          offset += equal;
+          j += equal;
+          return;
+        }
+        offset += 8;
+        j += 8;
+      }
+    }
+  }
+  // Remaining characters, one at a time
   while (offset < len_seq_1 && j < len_seq_2 && _seq[offset] == curr_node.sequence[j]) {
     offset = offset + 1;   // Update the f.r. of this diagonal
     j = j + 1;
@@ -567,11 +699,13 @@ void TheseusAlignerImpl::LCP(
 
 // TODO: Implement different end conditions as Global, Semi-Global...
 void TheseusAlignerImpl::check_end_condition(
-    Cell curr_data)
+    Cell curr_data,
+    Cell::Matrix curr_matrix)
 {
   if (curr_data.offset == (int)_seq.size()) {
     _alignment.theseus_status = THESEUS_STATUS_ALG_COMPLETED;
-    _start_pos = curr_data;
+    _start_pos    = curr_data;
+    _start_matrix = curr_matrix;
   }
 }
 
@@ -582,15 +716,16 @@ void TheseusAlignerImpl::extend_diagonal(
     Cell::pos_t  init_pos,
     Cell::Matrix init_matrix)
 {
-  // Use a explicit stack to avoid recursion and stack overflow
-  // Values: Current node id, current position, current matrix
-  std::stack<std::tuple<NodeId, Cell::pos_t, Cell::Matrix>> extend_stack;
+  // Use a explicit stack to avoid recursion and stack overflow. The stack is a
+  // member so its memory is reused (allocating it for every diagonal was the
+  // most expensive part of the extend). extend_diagonal is never reentered.
+  std::vector<ExtendState> &extend_stack = _extend_stack;
   // Push the initial state onto the stack
-  extend_stack.push(std::make_tuple(init_node_id, init_pos, init_matrix));
+  extend_stack.push_back({init_node_id, init_pos, init_matrix});
   // Process the stack until it's empty
   while (!extend_stack.empty()) {
-    auto [curr_node_id, curr_pos, curr_from_matrix] = extend_stack.top();
-    extend_stack.pop();
+    auto [curr_node_id, curr_pos, curr_from_matrix] = extend_stack.back();
+    extend_stack.pop_back();
 
     // Extend the current diagonal
     NodeView curr_node_view = get_node(curr_node_id);
@@ -599,7 +734,7 @@ void TheseusAlignerImpl::extend_diagonal(
     int j = curr_cell_ptr->diag + curr_cell_ptr->offset;
     LCP(curr_node_view, curr_cell_ptr->offset, j);
     // End condition
-    check_end_condition(*curr_cell_ptr);
+    check_end_condition(*curr_cell_ptr, curr_from_matrix);
 
     // Jump to neighbours if the end of the current node is reached
     if (j == (int)curr_node_view.sequence.size() && curr_cell_ptr->offset <= (int)_seq.size() && has_out_nodes(curr_node_id)) {
@@ -623,7 +758,7 @@ void TheseusAlignerImpl::extend_diagonal(
           _beyond_scope->m_jumps_wf().push_back(new_cell);
           _vertices_data->get_vertex_data(new_cell.vertex_id)._m_jumps_positions[pos_score].push_back(pos_new_cell);
           // Push the next state onto the stack for the next neighbour
-          extend_stack.push(std::make_tuple(out_node_id, pos_new_cell, Cell::Matrix::MJumps));
+          extend_stack.push_back({out_node_id, pos_new_cell, Cell::Matrix::MJumps});
         }
       }
     }
@@ -643,20 +778,24 @@ void TheseusAlignerImpl::init_partial_backtrace() {
   for (int s = start_score; s <= _score - _heuristics.s_min(); ++s) {
     // Check M wavefront
     int start_pos_M = (s == 0) ? 0 : _beyond_scope->m_wf_pos(s-1);
-    int end_pos_M   = _beyond_scope->m_wf_pos(s) - 1;
+    int end_pos_M   = _beyond_scope->m_wf_pos(s);   // Exclusive
     for (int pos = start_pos_M; pos < end_pos_M; ++pos) {
       Cell curr_cell = _beyond_scope->m_wf()[pos];
       if (curr_cell.offset > best_cell.offset) {
         best_cell = curr_cell;
+        _start_score = s;
+        _start_matrix = Cell::Matrix::M;
       }
     }
     // Check M_jumps wavefront
     int start_pos_M_jumps = (s == 0) ? 0 : _beyond_scope->m_jumps_wf_pos(s-1);
-    int end_pos_M_jumps   = _beyond_scope->m_jumps_wf_pos(s) - 1;
+    int end_pos_M_jumps   = _beyond_scope->m_jumps_wf_pos(s);   // Exclusive
     for (int pos = start_pos_M_jumps; pos < end_pos_M_jumps; ++pos) {
       Cell curr_cell = _beyond_scope->m_jumps_wf()[pos];
       if (curr_cell.offset > best_cell.offset) {
         best_cell = curr_cell;
+        _start_score = s;
+        _start_matrix = Cell::Matrix::MJumps;
       }
     }
   }
@@ -698,14 +837,18 @@ void TheseusAlignerImpl::add_deletion()
 
 
 void TheseusAlignerImpl::one_backtrace_step(
-    Cell &curr_cell)
+    Cell &curr_cell,
+    Cell::Matrix &curr_matrix)
 {
   Cell prev_cell;
   if (curr_cell.from_matrix == Cell::Matrix::M) prev_cell = _beyond_scope->m_wf()[curr_cell.prev_pos];
   else if (curr_cell.from_matrix == Cell::Matrix::MJumps) prev_cell = _beyond_scope->m_jumps_wf()[curr_cell.prev_pos];
+  else if (curr_cell.from_matrix == Cell::Matrix::I2Jumps) prev_cell = _beyond_scope->i2_jumps_wf()[curr_cell.prev_pos];
   else prev_cell = _beyond_scope->i_jumps_wf()[curr_cell.prev_pos];
   int num_indels;
-  bool is_jump = ((curr_cell.vertex_id != prev_cell.vertex_id));
+  // We jump if the current matrix is MJumps, IJumps or I2Jumps. Comparing the
+  // vertices is not enough, as a vertex can jump to itself (self-loop)
+  bool is_jump = (curr_matrix == Cell::Matrix::MJumps || curr_matrix == Cell::Matrix::IJumps || curr_matrix == Cell::Matrix::I2Jumps);
   // We are inside the same vertex
   if (!is_jump) { // Still in the same vertex
     // Mismatch
@@ -738,7 +881,8 @@ void TheseusAlignerImpl::one_backtrace_step(
     int num_insertions = _graph.node_size(prev_cell.vertex_id) - col_in_prev_v;
     for (int l = 0; l < num_insertions; ++l) add_insertion();                 // Add the necessary insertions
   }
-  // Update current cell
+  // Update current matrix and cell
+  curr_matrix = curr_cell.from_matrix;
   curr_cell = prev_cell;
 }
 
@@ -748,12 +892,14 @@ void TheseusAlignerImpl::backtrace()
 {
   Cell curr_pos = _start_pos;
   _alignment.start_offset = _start_offset;
+  _alignment.score = _internal_penalties.to_original_score(_start_score, _start_pos.offset);
   _alignment.end_offset = curr_pos.diag + curr_pos.offset; // Vertex offset = j
   _alignment.path.push_back(curr_pos.vertex_id);
+  Cell::Matrix curr_matrix = _start_matrix;
   // Main backtrace loop
   while (curr_pos.prev_pos != -1)
   {
-    one_backtrace_step(curr_pos);
+    one_backtrace_step(curr_pos, curr_matrix);
   }
   // Add the matches until the beginning of the sequence
   add_matches(0, curr_pos.offset);

@@ -28,13 +28,14 @@
 
 #pragma once
 
+#include <algorithm>
 #include <vector>
 #include "theseus/graph.h"
 #include "theseus/penalties.h"
 
 /**
  * Class containing the alignment information (CIGAR and path) and a custom conversion
- * function to compute the alignment score according to user defined penalties.
+ * score according to user defined penalties.
  *
  */
 
@@ -91,53 +92,9 @@ class Alignment {
       int start_offset;             // Start offset in the first vertex of the path
       int end_offset;               // End offset in the last vertex of the path
       int theseus_status;           // Alignment status
-
-
-      /**
-       * @brief Compute the affine gap score of the CIGAR. This is due to the fact
-       * that we use equivalent internal penalties during the alignment stage that
-       * might differ from user defined penalties.
-       *
-       * @param user_penalties
-       * @return int Alignment score according to user penalties and computed CIGAR
-       */
-      int compute_affine_gap_score(Penalties &user_penalties) {
-          int score = 0;
-          bool insertion_open = false, deletion_open = false;
-          for (const auto &op : edit_op) {
-              if (op == 'X') {
-                  insertion_open = false;
-                  deletion_open = false;
-                  score += user_penalties.mism(); // Mismatch score
-              }
-              else if (op == 'I') {
-                  deletion_open = false;
-                  if (!insertion_open) {
-                      insertion_open = true;
-                      score += user_penalties.gapo() + user_penalties.gape(); // Gap open penalty for insertion
-                  }
-                  else {
-                      score += user_penalties.gape(); // Gap extend penalty for insertion
-                  }
-              }
-              else if (op == 'D') {
-                  insertion_open = false;
-                  if (!deletion_open) {
-                      deletion_open = true;
-                      score += user_penalties.gapo() + user_penalties.gape(); // Gap open penalty for deletion
-                  }
-                  else {
-                      score += user_penalties.gape(); // Gap extend penalty for deletion
-                  }
-              }
-              else if (op == 'M') {
-                  insertion_open = false;
-                  deletion_open = false;
-                  score += user_penalties.match(); // Match score
-              }
-          }
-          return score;
-      }
+      int score = 0;                // Alignment score according to the user penalties.
+                                    // Partial alignments: score of the partial path
+                                    // (consumed prefix of the sequence)
 
     private:
 };

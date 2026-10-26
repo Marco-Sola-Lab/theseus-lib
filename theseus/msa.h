@@ -625,7 +625,11 @@ namespace theseus {
             // The data on the start and end poa vertices is in:
             //    - std::vector<int> _seq_starts;
             //    - std::vector<int> _seq_ends;
-            for (int i = 0; i < num_sequences; ++i) {
+            // "num_sequences" is the ID of the last sequence, so there are
+            // _seq_starts.size() = num_sequences + 1 sequences. Empty sequences
+            // have no start/end vertices (-1).
+            for (size_t i = 0; i < _seq_starts.size(); ++i) {
+                if (_seq_starts[i] < 0) continue;
                 int start_column = node_to_column[_seq_starts[i]];
                 int end_column   = node_to_column[_seq_ends[i]];
                 int weight       = _seq_weights[i];
