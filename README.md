@@ -16,6 +16,7 @@
 * [Reporting Bugs and Feature Request](#theseus_bugs)
 * [License](#theseus_licence)
 * [Authors](#theseus_authors)
+* [Citation](#theseus_cite)
 
 ## <a name="introduction"></a> 1. Introduction
 
@@ -283,7 +284,22 @@ Albert Jimenez Blanco (albert.jimenez.blanco@upc.edu) is the main developer and 
 
 Lorién López-Villellas has had major contributions both in the technical implementation of Theseus and the final structure of the library.
 
-<!-- ## <a name="theseus_cite"></a> 7. CITATION
+## <a name="theseus_cite"></a> 9. CITATION
 
-**Albert Jimenez-Blanco, Lorien Lopez-Villellas, Juan Carlos Moure, Miquel Moreto, Santiago Marco-Sola**. ["Theseus: Fast and Optimal Affine-Gap Sequence-to-Graph Alignment"](). Bioinformatics, 2026. -->
+If you use Theseus in your research, please cite:
+
+**Albert Jiménez-Blanco, Lorién López-Villellas, Juan Carlos Moure, Miquel Moreto, Santiago Marco-Sola**. ["Theseus: fast and optimal affine-gap sequence-to-graph alignment"](https://academic.oup.com/bioinformatics/article/42/9/btag561/8742314). Bioinformatics, 42(9), btag561, 2026. DOI: [10.1093/bioinformatics/btag561](https://doi.org/10.1093/bioinformatics/btag561)
+
+```bibtex
+@article{jimenezblanco2026theseus,
+  title   = {Theseus: fast and optimal affine-gap sequence-to-graph alignment},
+  author  = {Jim{\'e}nez-Blanco, Albert and L{\'o}pez-Villellas, Lori{\'e}n and Moure, Juan Carlos and Moreto, Miquel and Marco-Sola, Santiago},
+  journal = {Bioinformatics},
+  volume  = {42},
+  number  = {9},
+  pages   = {btag561},
+  year    = {2026},
+  doi     = {10.1093/bioinformatics/btag561}
+}
+```
 
