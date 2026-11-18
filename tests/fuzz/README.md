@@ -24,7 +24,7 @@ g++ -std=c++23 -O1 -Iinclude tests/fuzz/fuzz_msa.cpp build/libtheseus.a -o fuzz_
 
 The program prints the first failing trials and a final `failures: X / N` line. Zero failures means everything agreed.
 
-Optional environment variables: `CFG` (fix the penalty configuration), `PEN="m,x,o,e"` (custom penalties), `BIG` (larger graphs), `LONG` (long vertices and queries), `EMPTY` (empty vertices), `DM` (match score in dual mode), `VERB` (print each trial), `T0` (first trial to run), and for `fuzz_msa`: `TMPF` (temporary GFA file) and `NOPOA` (skip the MSA integrity check). `EMPTY=1` with cycles is expected to hang (cycles of empty vertices).
+Optional environment variables: `CFG` (fix the penalty configuration), `PEN="m,x,o,e"` (custom penalties), `BIG` (larger graphs), `LONG` (long vertices and queries), `EMPTY` (empty vertices), `DM` (match score in dual mode), `VERB` (print each trial), `T0` (first trial to run), and for `fuzz_msa`: `TMPF` (temporary GFA file), `NOPOA` (skip the MSA integrity check), `EC=<0|1|2>` (end condition of the alignments: 0 full query (default), 1 end to end, 2 ends free), `REV` (align each sequence forward or in reverse, randomly) and `DROP` (use the density drop heuristic, with sequences that make it drop the alignment; the number of dropped alignments is printed). `EMPTY=1` with cycles is expected to hang (cycles of empty vertices).
 
 ## What is done
 
@@ -44,6 +44,11 @@ Each trial is generated from a seed derived from the trial number, so **every fa
 1. Generate a random base sequence and build a POA graph by adding several mutated versions of it.
 2. Before adding each sequence, dump the current graph as GFA and align the new sequence against it with the reference.
 3. Check the same score and replay conditions as above, plus that the MSA printed by Theseus reproduces every added sequence once the gaps are removed.
+
+With `EC`, `REV` and `DROP` the trial also covers the options of each sequence:
+* The reference uses the end condition (`reference` in `fuzz_common.h`: the whole query is consumed, and/or the sink is reached). A reverse alignment is checked as a forward alignment of the reversed sequence to the reversed graph (`reverse_graph`), and its CIGAR and path are reversed before the replay.
+* With `EC=2` or `REV` some sequences are cut, so they only cover the first (forward) or the last (reverse) part of the graph. The check of the end condition looks at the number of characters consumed and at the last vertex of the path.
+* With `DROP` some sequences have random characters after their end (before their start in a reverse alignment). If the density heuristic drops the alignment, the result is partial and not necessarily optimal, so only the replay of the partial alignment (without requiring the whole sequence), its score, and that the aligned part of the sequence is in the MSA are checked. The alignments that are not dropped are compared with the reference as usual.
 
 ## Rationale
 

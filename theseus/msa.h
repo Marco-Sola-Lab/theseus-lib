@@ -64,6 +64,18 @@ namespace theseus {
             int destination;                    // Destination vertex
     };
 
+    // Where the alignment of a sequence is placed in the POA graph. The vertices of
+    // the path are in the order of the graph and the sequence in forward order,
+    // also in a reverse alignment
+    struct POAPlacement {
+        int  first_column;   // First column of the first vertex of the path that is aligned
+        int  last_column;    // Number of columns of the last vertex of the path that are aligned
+        int  first_row;      // Index of the first character of the sequence that is aligned
+        bool reversed;       // The alignment was done from the sink backwards
+        bool source_link;    // Link the start of the alignment to the source (false: fake node -1)
+        bool sink_link;      // Link the end of the alignment to the sink (false: fake node -1)
+    };
+
     class POAGraph {
         public:
 
@@ -257,32 +269,46 @@ namespace theseus {
             }
         }
 
+        // Convert the path of an alignment into a path of POA vertices. The first and
+        // last elements are the vertices that the alignment is linked to (the source
+        // and the sink) or the fake node -1 (no link, see update_poa_edge)
         void convert_path(
             Alignment &backtrace,
             std::vector<int> &poa_path,
             Graph &compacted_G,
-            int end_column
+            const POAPlacement &placement
         ) {
-            // First vertex (add it because it is empty)
-            poa_path.push_back(_first_poa_vtx[backtrace.path[0]]);
-            // Convert the path to a path in the poa graph
-            for (long unsigned int l = 1; l < backtrace.path.size() - 1; ++l) {
+            constexpr NodeId source_node = 0;
+            const int last_idx = (int)backtrace.path.size() - 1;
+            // Start of the path
+            poa_path.push_back(placement.source_link ? _first_poa_vtx[source_node] : -1);
+            // First vertex (empty if it is the source). If the alignment starts in
+            // the middle of it, only its last columns are aligned
+            const NodeId first_node = backtrace.path[0];
+            if (first_node != source_node) {
+                const int node_size = compacted_G.node_size(first_node);
+                for (int k = placement.first_column; k < node_size; ++k) {
+                    poa_path.push_back(_first_poa_vtx[first_node] + k);
+                }
+            }
+            // Internal vertices
+            for (int l = 1; l < last_idx; ++l) {
                 int first_poa_vtx = _first_poa_vtx[backtrace.path[l]];
-                // Add all internal vertices
                 int node_size = compacted_G.node_size(backtrace.path[l]);
                 for (int k = 0; k < node_size; ++k) {
                     poa_path.push_back(first_poa_vtx + k);
                 }
             }
             // Add the nodes of last vertex (if it is not empty) and only up to the
-            // end column.
-            int last_vertex = backtrace.path[backtrace.path.size() - 1];
-            int first_poa_vtx = _first_poa_vtx[last_vertex];
-            for (int k = 0; k < end_column; ++k) {
-                poa_path.push_back(first_poa_vtx + k);
+            // last aligned column
+            if (last_idx > 0) {
+                int first_poa_vtx = _first_poa_vtx[backtrace.path[last_idx]];
+                for (int k = 0; k < placement.last_column; ++k) {
+                    poa_path.push_back(first_poa_vtx + k);
+                }
             }
-            // Connect to sink
-            poa_path.push_back(_end_vtx_poa);
+            // End of the path
+            poa_path.push_back(placement.sink_link ? _end_vtx_poa : -1);
         }
 
 
@@ -293,15 +319,19 @@ namespace theseus {
             SequenceView new_seq,
             int seq_ID,
             int weight,
-            int end_column
+            const POAPlacement &placement
         ) {
             // Convert the path to the corresponding path in the poa graph
             std::vector<int> poa_path;
-            convert_path(backtrace, poa_path, compacted_G, end_column);
+            convert_path(backtrace, poa_path, compacted_G, placement);
+            // Reversed sequences are added "forward". Change access to them
+            if (placement.reversed) {
+                new_seq.change_reversed_flag(false);
+            }
             bool new_node_exists = false;
             NodeId new_node_id;
             long unsigned int k = 0;
-            int i = 0, l = 0, prev_v_poa = poa_path[0], new_v_poa = poa_path[0];
+            int i = placement.first_row, l = 0, prev_v_poa = poa_path[0], new_v_poa = poa_path[0];
             while (k < backtrace.edit_op.size()) {
                 if (backtrace.edit_op[k] == 'M') {  // Match
                     prev_v_poa = new_v_poa;
@@ -354,11 +384,13 @@ namespace theseus {
                 k += 1;
             }
             prev_v_poa = new_v_poa;
-            // Add edge to the sink/source node, as no edit operation covers it?
-            update_poa_edge(prev_v_poa, poa_path[poa_path.size() - 1], compacted_G); // Add the edge to the sink node
+            // Add the edge to the end of the path (sink, or nothing if it is the fake node -1)
+            update_poa_edge(prev_v_poa, poa_path[poa_path.size() - 1], compacted_G);
             // Update sequence weight, start poa vertex and end poa vertex
             _seq_weights.push_back(weight);
-            if (new_seq.size() > 0) {
+            // Sequences with no aligned character (empty, or a dropped alignment that
+            // only aligned the gaps) have no start/end vertices (-1)
+            if (i > placement.first_row) {
                 _seq_starts.push_back(poa_path[1]);
                 _seq_ends.push_back(prev_v_poa);
             }

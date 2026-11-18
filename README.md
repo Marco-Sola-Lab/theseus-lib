@@ -69,6 +69,28 @@ theseus::Alignment alignment_object = aligner.align(sequence, weight, lag_prunin
 
 Each time a new sequence is added to the POA graph, the graph is updated with the newly found variation (all the insertions, deletions and mismatches of the resulting alignment object).
 
+#### Options of each sequence
+
+Each sequence can be aligned with its own options, using the `MSAOptions` struct:
+```
+theseus::MSAOptions msa_options;
+options.lag_pruning   = false;                              // Prune the diagonals lagging behind
+options.reverse       = false;                              // Align from the sink of the POA graph backwards
+options.end_condition = theseus::EndCondition::FullQuery;   // When the alignment ends
+options.density_drop  = false;                              // Drop the alignments that advance too slowly
+theseus::Alignment alignment_object = aligner.align(sequence, weight, msa_options);
+```
+The call without options, `aligner.align(sequence, weight, lag_pruning_active)`, is the same as using the default options.
+
+**End condition.** It defines when the alignment of a sequence ends, and how the sequence is linked to the POA graph:
+* `FullQuery` (default): the alignment ends when the whole sequence has been consumed, wherever that is in the graph. The sequence is always linked to the sink of the POA graph, so the rest of the graph is not penalized.
+* `EndToEnd`: the whole sequence has been consumed **and** the end of the graph has been reached. The part of the graph that the sequence does not cover is aligned (as a gap), so it is penalized.
+* `EndsFree`: the whole sequence has been consumed **or** the end of the graph has been reached. This is meant for partial sequences, that only cover a part of the graph. If the end of the graph is not reached, the sequence is not linked to the sink, as it does not necessarily end there.
+
+**Reverse alignment.** With `reverse = true` the sequence is aligned from the sink of the POA graph backwards: the end of the sequence is aligned to the end of the graph, and its start is free (in a forward alignment the start is fixed and the end is free). With `FullQuery` or `EndsFree` it is the way to add partial sequences that cover the last part of the graph. The alignment (path and edit operations) is returned in the order of the graph and of the sequence, as in a forward alignment.
+
+**Density drop.** With `density_drop = true` the alignment is dropped when it advances too slowly in the sequence (for example when the sequence has a long region that does not match the graph). The partial alignment found is the one that is added to the POA graph, so only the aligned part of the sequence appears in the MSA. The returned alignment has `theseus_status == THESEUS_STATUS_END_UNREACHABLE` and the score of the partial alignment. Check the status if you need to know whether an alignment was dropped.
+
 Finally, we can output the result in five different formats: a graph in .gfa format, a multiple sequence alignment, a consensus sequence, a consensus sequence based on the majority voting algorithm, and a graph in .dot format:
 ```
 // Output as a Multiple Sequence Alignment
@@ -170,7 +192,7 @@ The Theseus library implements two minimal tools to use the Theseus algorithm on
 
 ### <a name="consensus_tool"></a> 3.1. MSA tool
 
-This example illustrates how to use the **MSA** tool. This tool computes the MSA of the set of sequences in an given input *.fasta* file, allowing to add partial sequences, as long as they start on either end of a backbone sequence. The executable is located in the path */build/tools/theseus_msa*:
+This example illustrates how to use the **MSA** tool. This tool computes the MSA of the set of sequences in an given input *.fasta* file. The first sequence is the backbone that starts the POA graph, and the following ones are added to it. Partial sequences, that only cover the first or the last part of the backbone, can be added using the per-sequence options described below. The executable is located in the path */build/tools/theseus_msa*:
 ```
 cd build/tools/
 ```
@@ -203,6 +225,25 @@ An example of the execution of *theseus_msa* is shown in the following piece of 
 ./theseus_msa -m 0 -x 2 -o 3 -e 1 -t 0 -f output_file.out -s sequences.fasta
 ```
 
+**Per-sequence options.** By default, every sequence has weight 1, is aligned forward until the whole sequence is consumed (`FullQuery`, see [Multiple Sequence Alignment](#msa_usage)), and uses the lag pruning given by `-l`. The options of a sequence can be set in its header line of the *.fasta* file, which then has to contain five integers:
+```
+> reverse end_condition weight density_drop lag_pruning
+```
+1) `reverse` (0 or 1): align the sequence in reverse, from the sink of the POA graph. 2) `end_condition` (0, 1 or 2): `0` is `FullQuery`, `1` is `EndsFree` and `2` is `EndToEnd`. 3) `weight` (positive integer): weight of the sequence. 4) `density_drop` (0 or 1): drop the alignment if it advances too slowly. 5) `lag_pruning` (0 or 1): use the lag pruning heuristic for this sequence (it replaces `-l`).
+
+If the header does not have these five values (a sequence name, for instance, or values out of range), the default options are used (the same as `0 0 1 0 0` with the lag pruning of `-l`). The options of the first sequence are not used (it only creates the POA graph), but its weight is. For instance, the following file has a backbone, a sequence aligned end to end (`2`) with weight 2, a partial sequence that only covers the first part of the backbone (ends free, `1`), and a partial sequence that covers the last part and is aligned in reverse (ends free, `1`):
+```
+> 0 0 1 0 0
+ACCCGTAAAAGGG
+> 0 2 2 0 0
+ACCCGTCAAAGGG
+> 0 1 1 0 0
+ACCCGT
+> 1 1 1 0 0
+GTAAAAGGG
+```
+When a sequence is dropped by the density heuristic, the tool prints a message and the partial alignment is added to the MSA.
+
 
 ### <a name="seq_to_graph_tool"></a> 3.2. Seq-to-graph tool: theseus_aligner
 This example illustrates how to use the **theseus_aligner** tool. This tool aligns a set of sequences, given their starting vertices, offsets, and orientations, to a reference graph. Two input files are required: 1) The reference graph in *.gfa* format, 2) The sequences to be aligned with the starting alignment positions and orientation in *.fasta* format.
@@ -225,7 +266,7 @@ The executable is located in the path */build/tools/theseus_aligner*:
 cd build/tools/
 ```
 
-Select the scoring scheme, set the input and output files and execute the tool. Each execution of *pericles* lets you select the following parameters:
+Select the scoring scheme, set the input and output files and execute the tool. Each execution of *theseus_aligner* lets you select the following parameters:
 ```
 Usage: theseus_aligner [OPTIONS]
                  Options:
@@ -247,7 +288,7 @@ Usage: theseus_aligner [OPTIONS]
                    -l  --lag_pruning           Activate the pruning of diagonals lagging behind int the alignment.
 ```
 
-An example of the execution of *pericles* is shown in the following piece of code
+An example of the execution of *theseus_aligner* is shown in the following piece of code
 ```
 ./theseus_aligner -m 0 -x 2 -o 3 -e 1 -g reference_graph.gfa -s sequences.fasta -f output.out
 ```

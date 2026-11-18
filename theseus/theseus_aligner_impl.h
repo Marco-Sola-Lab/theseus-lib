@@ -72,9 +72,12 @@ public:
      * starting at the specified node and offset.
      *
      * @param seq                Sequence to be aligned
+     * @param start_node         Start vertex (sequence-to-graph alignment)
+     * @param start_offset       Start offset in the start vertex (sequence-to-graph alignment)
      * @param weight             Weight of the sequence to be aligned (used for MSA)
-     * @param reverse_alignment  Whether to perform reverse alignment
-     * @param is_ends_free       Whether to allow a free end on the "end" of the graph
+     * @param options            Lag pruning, reverse alignment, end condition and
+     *                           density drop of this alignment. The reverse alignment
+     *                           and the end condition are only used for MSA
      *
      * @return                  Alignment object
      */
@@ -84,11 +87,8 @@ public:
                     int  start_offset,
                     // MSA parameters
                     int  weight = 1,
-                    bool is_ends_free = false,
                     // Common parameters
-                    bool reverse_alignment = false,
-                    bool density_drop_active = false,
-                    bool lag_pruning_active = false);
+                    const MSAOptions &options = MSAOptions());
 
     /**
      * @brief Set the alignment mode (full alignment or score only).
@@ -441,6 +441,16 @@ private:
      */
     void backtrace();
 
+    /**
+     * @brief Add the last alignment (already backtraced) to the POA graph (MSA).
+     * The end condition and the direction of the alignment decide whether the
+     * sequence is linked to the sink and to the source of the POA graph.
+     *
+     * @param weight   Weight of the sequence
+     * @param dropped  Whether it is a partial alignment (dropped by a heuristic)
+     */
+    void add_alignment_to_poa(int weight, bool dropped);
+
 
     /**
      * @brief Internal function to print the graph in GFA format. This is used by
@@ -471,8 +481,8 @@ private:
 
     std::unique_ptr<POAGraph> _poa_graph; // Partial order alignment graph for MSA
 
-    bool _ends_free;
-    bool _reversed_alignment = false;   // Read by the printing functions before the first alignment
+    EndCondition _end_condition = EndCondition::FullQuery;   // End condition of the current alignment
+    bool _reversed_alignment = false;   // Direction of the current alignment
     int  _start_column;
     int  _seq_ID = 0;
     NodeId _start_node;

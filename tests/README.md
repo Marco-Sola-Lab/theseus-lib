@@ -11,7 +11,7 @@ The unit tests use [doctest](https://github.com/doctest/doctest) (`doctest.h`, w
 
 | File | What it checks |
 |------|----------------|
-| `msa_tests.cpp` | MSA aligner: matches, mismatches, insertions and deletions, diverging sequences, several sequences, reversed MSA, dual affine gaps, and regressions (weighted majority voting, the MSA reproduces every input sequence). |
+| `msa_tests.cpp` | MSA aligner: matches, mismatches, insertions and deletions, diverging sequences, several sequences, dual affine gaps, and regressions (weighted majority voting, the MSA reproduces every input sequence). It also checks the per-sequence options: the three end conditions (scores, and whether the sequence is linked to the sink of the POA graph), reverse alignments (linked to the source, mixed with forward ones) and the density drop (partial alignment added to the POA graph, status and score). |
 | `seq_to_graph_tests.cpp` | Sequence-to-graph aligner: graphs with cycles, self-loops, non-zero match scores, heuristic flags, penalty validation, dual affine gaps and the score-only mode. |
 | `vector.cpp` | Internal vector class: constructors, assignments, resizing, iterators, allocation policies. |
 

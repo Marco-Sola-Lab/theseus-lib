@@ -13,6 +13,8 @@
  *
  * All the aligners are expected to work "end-to-end on the query": the whole query must be
  * aligned, starting at a given (node, offset) of the graph, and it can end anywhere in the graph.
+ * The MSA fuzzer also checks the other end conditions (see EndCondition in alignment.h) and the
+ * reverse alignments, which the reference computes on the reversed graph (see reverse_graph).
  */
 #pragma once
 
@@ -171,9 +173,13 @@ constexpr long INF = 1000000000L;
 //   - position: every vertex v owns the positions base[v] .. base[v]+len(v); position base[v]+len(v)
 //     means "all the vertex is consumed", and it is where the edges to the next vertices start.
 //   - state: the last operation (needed for affine gaps: continuing a gap is cheaper than opening one).
-// The query is aligned from the start (vertex, offset) and may end at any position of the graph.
+// The query is aligned from the start (vertex, offset). Where it can end depends on end_mode:
+//   0 (full query):  the whole query is consumed, at any position of the graph (default),
+//   1 (end to end):  the whole query is consumed AND the vertex end_vertex is reached,
+//   2 (ends free):   the whole query is consumed OR the vertex end_vertex is reached.
 // Returns INF if it cannot be aligned.
-inline long reference(const SimpleGraph &g, int start, int soff, const std::string &q, const Pen &p) {
+inline long reference(const SimpleGraph &g, int start, int soff, const std::string &q, const Pen &p,
+                      int end_mode = 0, int end_vertex = -1) {
   // States: last operation was ...
   enum State { M = 0, I1, D1, I2, D2 };   // match/mismatch, insertion/deletion of gap piece 1 and 2
   constexpr int NSTATES = 5;
@@ -216,7 +222,14 @@ inline long reference(const SimpleGraph &g, int start, int soff, const std::stri
     int j = pos - base[v];
     int len = g.seq[v].size();
 
-    if (i == n) best = std::min(best, d);   // whole query consumed: valid end (anywhere in the graph)
+    // Valid end of the alignment, according to the end condition
+    const bool query_done    = (i == n);
+    const bool at_end_vertex = (v == end_vertex);
+    bool is_end;
+    if (end_mode == 0) is_end = query_done;
+    else if (end_mode == 1) is_end = query_done && at_end_vertex;
+    else is_end = query_done || at_end_vertex;
+    if (is_end) best = std::min(best, d);
 
     // End of the vertex: free move to the start of each successor.
     if (j == len)
@@ -236,6 +249,19 @@ inline long reference(const SimpleGraph &g, int start, int soff, const std::stri
     }
   }
   return best;
+}
+
+// Graph where every sequence is reversed and every edge goes in the opposite direction. Aligning
+// the reversed query to it from the last vertex gives the same score as a reverse alignment
+// (the one that walks the graph backwards).
+inline SimpleGraph reverse_graph(const SimpleGraph &g) {
+  SimpleGraph r;
+  r.resize(g.size());
+  for (size_t v = 0; v < g.size(); ++v) {
+    r.seq[v] = std::string(g.seq[v].rbegin(), g.seq[v].rend());
+    for (int w : g.out[v]) r.out[w].push_back(v);
+  }
+  return r;
 }
 
 // Score of an edit script (string of M/X/I/D) under the penalties `p`.
@@ -269,9 +295,11 @@ inline bool path_is_valid(const SimpleGraph &g, int start, const std::vector<Gra
 //   - the path follows existing edges,
 //   - M/X agree with the actual characters (M only if equal, X only if different),
 //   - the operations do not run past the end of a vertex or of the query,
-//   - the whole query is consumed.
+//   - the whole query is consumed (unless `consumed` is given: then the number of query
+//     characters that the alignment consumes is stored there, for partial alignments).
 // On failure returns false and explains it in `why`.
-inline bool replay(const SimpleGraph &g, int start, int soff, const std::string &q, const Alignment &a, std::string &why) {
+inline bool replay(const SimpleGraph &g, int start, int soff, const std::string &q, const Alignment &a, std::string &why,
+                   size_t *consumed = nullptr) {
   if (!path_is_valid(g, start, a.path, why)) return false;
 
   size_t pi = 0;       // index in the path of the current vertex
@@ -296,7 +324,8 @@ inline bool replay(const SimpleGraph &g, int start, int soff, const std::string 
       ++qi;
     }
   }
-  if (qi != q.size()) { why = "query not consumed"; return false; }
+  if (consumed) *consumed = qi;
+  else if (qi != q.size()) { why = "query not consumed"; return false; }
   return true;
 }
 

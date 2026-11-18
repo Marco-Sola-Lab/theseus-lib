@@ -75,8 +75,11 @@ Alignment TheseusAligner::align(
     bool density_drop_active,
     bool lag_pruning_active) {
 
-    // Arguments: weight, is_ends_free, reverse_alignment, density_drop_active, lag_pruning_active
-    return aligner_impl_->align(seq, start_node, start_offset, 1, false, false, density_drop_active, lag_pruning_active);
+    // Only the heuristics are used (reverse alignment and end condition are for the MSA)
+    MSAOptions options;
+    options.density_drop = density_drop_active;
+    options.lag_pruning  = lag_pruning_active;
+    return aligner_impl_->align(seq, start_node, start_offset, 1, options);
 }
 
 void TheseusAligner::set_alignment_mode(AlignmentMode mode) {

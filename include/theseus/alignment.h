@@ -55,6 +55,39 @@ enum class AlignmentMode {
     ScoreOnly
 };
 
+/**
+ * End conditions of an alignment to the POA graph of the MSA. The aligner stops
+ * as soon as the condition is met:
+ * - FullQuery (default): the whole query is consumed. The alignment can end at
+ *   any position of the graph. The sequence is always linked to the sink (or to
+ *   the source in a reverse alignment) in the POA graph.
+ * - EndToEnd: the whole query is consumed AND the end of the graph (sink, or
+ *   source in a reverse alignment) is reached.
+ * - EndsFree: the whole query is consumed OR the end of the graph is reached.
+ *   If the end of the graph is not reached, the sequence is not linked to it.
+ */
+enum class EndCondition {
+    FullQuery,
+    EndToEnd,
+    EndsFree
+};
+
+/**
+ * Options of the alignment of one sequence to the POA graph of the MSA:
+ * - lag_pruning:   prune the diagonals that lag behind in the alignment.
+ * - reverse:       align from the end of the graph (the sink) backwards.
+ * - end_condition: see EndCondition.
+ * - density_drop:  drop the alignment when it advances too slowly. The partial
+ *                  alignment found is added to the POA graph and the returned
+ *                  status is THESEUS_STATUS_END_UNREACHABLE.
+ */
+struct MSAOptions {
+    bool         lag_pruning   = false;
+    bool         reverse       = false;
+    EndCondition end_condition = EndCondition::FullQuery;
+    bool         density_drop  = false;
+};
+
 class Alignment {
     public:
     /*

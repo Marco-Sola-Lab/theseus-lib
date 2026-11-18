@@ -63,14 +63,55 @@ struct CMDArgs {
 
 
 /**
- * @brief Read the sequences from a file.
+ * @brief Parse the header of a sequence in the Pericles format:
+ *          "> reverse end_condition weight density_drop lag_pruning"
+ * The five integers must be present. The flags (reverse, density_drop and
+ * lag_pruning) must be 0 or 1, the end condition 0 (full query), 1 (ends free) or
+ * 2 (end to end), and the weight positive. Otherwise it is not a Pericles header
+ * (e.g. a sequence name) and the function returns false.
+ *
+ * @param line     Header line of the fasta file (starts with '>')
+ * @param weight   Weight of the sequence
+ * @param options  Options of the alignment (reverse, end condition, density drop and lag pruning)
+ */
+bool parse_header(
+    const std::string &line,
+    int &weight,
+    theseus::MSAOptions &options)
+{
+    std::istringstream iss(line);
+    char header;
+    int reverse, end_condition, density_drop, lag_pruning;
+    if (!(iss >> header >> reverse >> end_condition >> weight >> density_drop >> lag_pruning)) return false;
+    const bool valid_flags = (reverse == 0 || reverse == 1) && (end_condition >= 0 && end_condition <= 2) &&
+                             (density_drop == 0 || density_drop == 1) && (lag_pruning == 0 || lag_pruning == 1);
+    if (!valid_flags || weight < 1) return false;
+    options.reverse       = (reverse == 1);
+    // End condition of the header: 0 full query, 1 ends free, 2 end to end
+    if (end_condition == 0) options.end_condition = theseus::EndCondition::FullQuery;
+    else if (end_condition == 1) options.end_condition = theseus::EndCondition::EndsFree;
+    else options.end_condition = theseus::EndCondition::EndToEnd;
+    options.density_drop  = (density_drop == 1);
+    options.lag_pruning   = (lag_pruning == 1);
+    return true;
+}
+
+
+/**
+ * @brief Read the sequences from a file. If the header of a sequence is in the
+ * Pericles format (see parse_header) its weight and options are read from it.
+ * Otherwise the sequence has weight 1 and the default options (the lag pruning
+ * is the one of the command line).
  *
  * @param sequences Vector to store the sequences
+ * @param weights Vector to store the weights of the sequences
+ * @param options Vector to store the alignment options of the sequences
  * @param args Arguments containing the file name
  */
 void read_sequences(
     std::vector<std::string> &sequences,
     std::vector<int> &weights,
+    std::vector<theseus::MSAOptions> &options,
     CMDArgs &args)
 {
 
@@ -96,11 +137,17 @@ void read_sequences(
             if (num > 0) sequences.push_back(sequence);
             sequence.clear();
             num += 1;
-            // std::istringstream iss(line);
-            // char header;
-            // int weight;
-            // iss >> header >> weight;
-            // weights.push_back(weight);
+            // Default values, replaced by the ones of the header (if it has them)
+            int weight = 1;
+            theseus::MSAOptions seq_options;
+            seq_options.lag_pruning = args.lag_pruning;
+            if (!parse_header(line, weight, seq_options)) {
+                weight = 1;
+                seq_options = theseus::MSAOptions();
+                seq_options.lag_pruning = args.lag_pruning;
+            }
+            weights.push_back(weight);
+            options.push_back(seq_options);
         }
         else
         {
@@ -122,7 +169,7 @@ void read_sequences(
  * @brief Print the help message.
  */
 void help() {
-    std::cout << "Usage: pericles [OPTIONS]\n"
+    std::cout << "Usage: theseus_msa [OPTIONS]\n"
                  "Options:\n"
                  "  -m, --match <int>           The match penalty                                       [default=0]\n"
                  "  -x, --mismatch <int>        The mismatch penalty                                    [default=2]\n"
@@ -143,6 +190,14 @@ void help() {
                  "                                       Only tractable for small graphs\n"
                  "  -f, --output <file>         Output file                                             [Required]\n"
                  "  -s, --sequences <file>      Dataset file                                            [Required]\n\n"
+
+                 " Per-sequence options (optional, in the header of each sequence of the fasta file):\n"
+                 "  > <reverse> <end_condition> <weight> <density_drop> <lag_pruning>\n"
+                 "  If the header has these five integers they set the options of the sequence: reverse\n"
+                 "  alignment (0 or 1), end condition (0: full query, 1: ends free, 2: end to end), weight,\n"
+                 "  density drop (0 or 1) and lag pruning (0 or 1). Otherwise: weight 1, forward alignment\n"
+                 "  that ends when the whole sequence is consumed (full query), no density drop, and the\n"
+                 "  lag pruning of the command line.\n"
 
                  " Heuristics:\n"
                  "  -l  --lag_pruning           Activate the pruning of diagonals lagging behind int the alignment.  \n";
@@ -238,18 +293,27 @@ int main(int argc, char *const *argv) {
     // Read the sequences for the MSA
     std::vector<std::string> sequences;
     std::vector<int> weights;
-    read_sequences(sequences, weights, args);
+    std::vector<theseus::MSAOptions> options;
+    read_sequences(sequences, weights, options, args);
+    if (sequences.empty()) {
+        std::cerr << "No sequences found in the dataset file\n";
+        return 1;
+    }
 
     // Prepare the data
     std::vector<theseus::Alignment> alignments(sequences.size());
     std::string_view initial_seq = sequences[0];
-    theseus::TheseusMSA aligner(penalties, heuristics, initial_seq, 1);
+    // The options of the first sequence are not used: it only creates the POA graph
+    theseus::TheseusMSA aligner(penalties, heuristics, initial_seq, weights[0]);
 
     // Alignment with Theseus
     for (int j = 1; j < sequences.size(); ++j) {
         std::cout << "Processing sequence " << j << std::endl;
-        alignments[j] = aligner.align(sequences[j], 1, args.lag_pruning);
-        if (alignments[j].theseus_status != THESEUS_STATUS_ALG_COMPLETED) {
+        alignments[j] = aligner.align(sequences[j], weights[j], options[j]);
+        if (alignments[j].theseus_status == THESEUS_STATUS_END_UNREACHABLE) {
+            std::cerr << "Alignment " << j << " dropped by the density heuristic (partial alignment added)" << std::endl;
+        }
+        else if (alignments[j].theseus_status != THESEUS_STATUS_ALG_COMPLETED) {
             std::cerr << "Alignment " << j << " with status " << alignments[j].theseus_status << " did not complete successfully" << std::endl;
         }
         std::cout << "Score = " << alignments[j].score << std::endl << std::endl;

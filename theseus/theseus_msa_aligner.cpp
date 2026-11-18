@@ -59,10 +59,10 @@ TheseusMSA::TheseusMSA(const Penalties &penalties,
 TheseusMSA::~TheseusMSA() {}
 
 /**
- * @brief Main alignment function for the Theseus aligner.
+ * @brief Alignment function of the MSA with the default options (only the lag
+ * pruning heuristic can be selected).
  *
  * @param seq
- *
  * @param weight              Sequence weight
  * @param lag_pruning_active  Whether to use the lag pruning heuristic
  * @return Alignment
@@ -72,7 +72,25 @@ Alignment TheseusMSA::align(
     int  weight,
     bool lag_pruning_active
 ) {
-    return msa_aligner_impl_->align(seq, 0, 0, weight, false, false, false, lag_pruning_active);
+    MSAOptions options;
+    options.lag_pruning = lag_pruning_active;
+    return align(seq, weight, options);
+}
+
+/**
+ * @brief Main alignment function of the MSA.
+ *
+ * @param seq
+ * @param weight   Sequence weight
+ * @param options  Lag pruning, reverse alignment, end condition and density drop
+ * @return Alignment
+ */
+Alignment TheseusMSA::align(
+    std::string_view seq,
+    int  weight,
+    const MSAOptions &options
+) {
+    return msa_aligner_impl_->align(seq, 0, 0, weight, options);
 }
 
 /**

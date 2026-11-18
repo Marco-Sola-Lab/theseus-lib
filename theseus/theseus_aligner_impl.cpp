@@ -185,13 +185,11 @@ Alignment TheseusAlignerImpl::align(
     int  start_offset,
     // MSA parameters
     int  weight,
-    bool is_ends_free,
     // Common parameters
-    bool reverse_alignment,
-    bool density_drop_active,
-    bool lag_pruning_active
+    const MSAOptions &options
   )
 {
+  const bool reverse_alignment = options.reverse;
   // MSA_mode: Start position depends on the alignment direction)
   if (_is_msa) {
     if (!reverse_alignment) {
@@ -210,11 +208,12 @@ Alignment TheseusAlignerImpl::align(
     _start_node   = start_node;
     _start_offset = start_offset;
   }
-  // Set alignment parameters
-  _ends_free = is_ends_free;
+  // Set alignment parameters. The end condition only applies to the MSA: a
+  // general graph has no sink, so the alignment ends when the query is consumed
+  _end_condition = _is_msa ? options.end_condition : EndCondition::FullQuery;
   _score_only = (_mode == AlignmentMode::ScoreOnly) && !_is_msa;
   // Initialize data for the new alignment
-  new_alignment(Graph::SequenceView(seq, reverse_alignment), reverse_alignment, density_drop_active, lag_pruning_active);
+  new_alignment(Graph::SequenceView(seq, reverse_alignment), reverse_alignment, options.density_drop, options.lag_pruning);
   _score = 0;
   // _graph.print_code_graphviz();
   // Main alignment loop
@@ -253,24 +252,58 @@ Alignment TheseusAlignerImpl::align(
   if (_alignment.theseus_status == THESEUS_STATUS_ALG_COMPLETED) {
     _start_score = _score;
     backtrace();
-    if (_is_msa) {
-      // Compute the end column of the alignment in the POA graph
-      int end_column = _start_pos.offset + _start_pos.diag;
-      _poa_graph->add_alignment_poa(_graph, _alignment, _seq, _seq_ID, weight, end_column);
-    }
+    if (_is_msa) add_alignment_to_poa(weight, false);
   }
   else {
-    // Error messages
+    // Dropped alignment (density drop heuristic)
     if (_alignment.theseus_status == THESEUS_STATUS_END_UNREACHABLE) {
       // Choose starting position for backtrace (cell with maximum offset in M[s-_s_min]-M[s-_s_min - scope_size])
       // matrix on the last scope scores
       init_partial_backtrace();
       // Perform partial backtrace
-      backtrace();
-      // No drop in MSA mode
+      if (_start_pos.offset >= 0) {
+        backtrace();
+        // The partial alignment is added to the POA graph, so the sequence IDs
+        // and the weights of the POA graph stay in sync with the aligned sequences
+        if (_is_msa) add_alignment_to_poa(weight, true);
+      }
+      // No cell to start the backtrace from: nothing is added, so the ID is not used
+      else _seq_ID -= 1;
     }
   }
   return _alignment;
+}
+
+// Add the last alignment to the POA graph. The cell where the alignment ends
+// (_start_pos) gives the columns and the row of the sequence that are covered.
+void TheseusAlignerImpl::add_alignment_to_poa(int weight, bool dropped) {
+  POAPlacement placement;
+  // Column reached in the vertex where the alignment ends (counting in the
+  // direction of the alignment)
+  const int end_column = _start_pos.offset + _start_pos.diag;
+  // We link the side of the alignment that is not anchored to the sink (source) if
+  // 1) The alignment reched the end of the graph
+  const bool end_reached    = (_start_pos.vertex_id == _end_node);
+  // 2) The end condition is FullQuery and the alignment was not dropped
+  const bool free_side_link = (_end_condition == EndCondition::FullQuery) && !dropped;
+  placement.reversed = _reversed_alignment;
+  // Forward alignment
+  if (!_reversed_alignment) {
+    placement.first_column = 0;
+    placement.last_column  = end_column;
+    placement.first_row    = 0;
+    placement.source_link  = true;
+    placement.sink_link    = free_side_link || end_reached;
+  }
+  // Reversed alignment
+  else {
+    placement.first_column = _graph.node_size(_start_pos.vertex_id) - end_column;
+    placement.last_column  = 0;
+    placement.first_row    = (int)_seq.size() - _start_pos.offset;
+    placement.source_link  = free_side_link || end_reached;
+    placement.sink_link    = true;
+  }
+  _poa_graph->add_alignment_poa(_graph, _alignment, _seq, _seq_ID, weight, placement);
 }
 
   // Sparsify M data
@@ -724,12 +757,18 @@ void TheseusAlignerImpl::LCP(
 }
 
 
-// TODO: Implement different end conditions as Global, Semi-Global...
+// The end conditions are described in EndCondition (alignment.h). The end node
+// is the sink (the source in a reverse alignment) and it is only set in MSA mode
 void TheseusAlignerImpl::check_end_condition(
     Cell curr_data,
     Cell::Matrix curr_matrix)
 {
-  if (curr_data.offset == (int)_seq.size()) {
+  const bool query_consumed = (curr_data.offset == (int)_seq.size());
+  bool end_reached;
+  if (_end_condition == EndCondition::FullQuery) end_reached = query_consumed;
+  else if (_end_condition == EndCondition::EndToEnd) end_reached = query_consumed && curr_data.vertex_id == _end_node;
+  else end_reached = query_consumed || curr_data.vertex_id == _end_node;
+  if (end_reached) {
     _alignment.theseus_status = THESEUS_STATUS_ALG_COMPLETED;
     _start_pos    = curr_data;
     _start_matrix = curr_matrix;
@@ -946,13 +985,13 @@ void TheseusAlignerImpl::backtrace()
  */
 void TheseusAlignerImpl::print_code_graphviz_internal(std::ostream &out_stream)
 {
-    // TODO: What if we wanted to print reversed?
-    _reversed_alignment = false;
+    // The graph is always printed in its forward direction, whatever the direction
+    // of the last alignment was
     out_stream << "digraph G {" << std::endl;
     // Print nodes
     for (NodeId id : _graph.nodes())
     {
-      NodeView node = get_node(id);
+      NodeView node = _graph.node(id);
       out_stream << id << " [label=\"";
       for (size_t j = 0; j < node.sequence.size(); ++j)
       {
@@ -963,7 +1002,7 @@ void TheseusAlignerImpl::print_code_graphviz_internal(std::ostream &out_stream)
     // Print edges
     for (NodeId id : _graph.nodes())
     {
-      auto node = get_node(id);
+      auto node = _graph.node(id);
       for (NodeId out_id : node.out_nodes)
       {
         out_stream << id << "->" << out_id << std::endl;
@@ -979,16 +1018,16 @@ void TheseusAlignerImpl::print_code_graphviz(std::ostream &out_stream) {
 void TheseusAlignerImpl::print_as_gfa_internal(
   std::ostream &gfa_output)
 {
-    // Print all nodes as Segments
+    // Print all nodes as Segments (always in the forward direction of the graph)
     for (NodeId id : _graph.nodes())
     {
-      NodeView node = get_node(id);
+      NodeView node = _graph.node(id);
       gfa_output << "S\t" << id << "\t" << node.sequence << "\n";
     }
     // Print all edges as Links
     for (NodeId id : _graph.nodes())
     {
-      NodeView node = get_node(id);
+      NodeView node = _graph.node(id);
       // Go through all incoming vertices (with this you cover all possible edges,
       // since the graph is directed)
       for (const auto in_node : node.in_nodes)
