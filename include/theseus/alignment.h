@@ -68,8 +68,8 @@ enum class AlignmentMode {
  */
 enum class EndCondition {
     FullQuery,
-    EndToEnd,
-    EndsFree
+    EndsFree,
+    EndToEnd
 };
 
 /**

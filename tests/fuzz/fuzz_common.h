@@ -175,8 +175,8 @@ constexpr long INF = 1000000000L;
 //   - state: the last operation (needed for affine gaps: continuing a gap is cheaper than opening one).
 // The query is aligned from the start (vertex, offset). Where it can end depends on end_mode:
 //   0 (full query):  the whole query is consumed, at any position of the graph (default),
-//   1 (end to end):  the whole query is consumed AND the vertex end_vertex is reached,
-//   2 (ends free):   the whole query is consumed OR the vertex end_vertex is reached.
+//   1 (ends free):   the whole query is consumed OR the vertex end_vertex is reached,
+//   2 (end to end):  the whole query is consumed AND the vertex end_vertex is reached.
 // Returns INF if it cannot be aligned.
 inline long reference(const SimpleGraph &g, int start, int soff, const std::string &q, const Pen &p,
                       int end_mode = 0, int end_vertex = -1) {
@@ -227,8 +227,8 @@ inline long reference(const SimpleGraph &g, int start, int soff, const std::stri
     const bool at_end_vertex = (v == end_vertex);
     bool is_end;
     if (end_mode == 0) is_end = query_done;
-    else if (end_mode == 1) is_end = query_done && at_end_vertex;
-    else is_end = query_done || at_end_vertex;
+    else if (end_mode == 1) is_end = query_done || at_end_vertex;
+    else is_end = query_done && at_end_vertex;
     if (is_end) best = std::min(best, d);
 
     // End of the vertex: free move to the start of each successor.

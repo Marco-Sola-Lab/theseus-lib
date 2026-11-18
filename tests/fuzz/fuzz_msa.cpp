@@ -6,7 +6,7 @@
  *
  * Usage: ./fuzz_msa <trials> <dual 0|1>
  *   env: CFG, PEN="m,x,o,e", DM  (penalties, see make_penalties in fuzz_common.h)
- *        EC     end condition of the alignments: 0 full query (default), 1 end to end, 2 ends free
+ *        EC     end condition of the alignments: 0 full query (default), 1 ends free, 2 end to end
  *        REV    align each sequence forward or in reverse (randomly)
  *        DROP   use the density drop heuristic, with sequences that make it drop the alignment
  *        TMPF   temporary GFA file (default /tmp/fuzz_msa.gfa)
@@ -17,7 +17,7 @@
  * Every trial builds a POA graph with TheseusMSA: a random base sequence, then several mutated
  * copies of it. Before adding each copy, the current graph is dumped as GFA and the copy is
  * aligned against it with the reference, starting at the source (vertex 0), or at the sink in a
- * reverse alignment, and ending as the end condition says. With EC=2 or REV some copies are
+ * reverse alignment, and ending as the end condition says. With EC=1 or REV some copies are
  * cut, so they only cover the first (forward) or last (reverse) part of the graph.
  * The checks are those of fuzz_s2g, plus the end condition and the integrity of the printed MSA.
  * A dropped alignment (DROP) is partial: only that the partial alignment is valid, its score
@@ -103,7 +103,7 @@ std::string aligned_part(const std::string &q, size_t consumed, bool reversed) {
 // is aligned in reverse), so the density drop heuristic drops its alignment.
 std::string make_query(std::mt19937 &rng, const std::string &base, bool dual, bool reversed, int end_cond, bool use_reverse, bool use_drop) {
   std::string q = mutate(rng, base, 0.05 + (rng() % 20) / 100.0, 1 + rng() % (dual ? 20 : 5));
-  if ((use_reverse || end_cond != 0) && end_cond != 1 && rng() % 2) {
+  if ((use_reverse || end_cond != 0) && end_cond != 2 && rng() % 2) {
     size_t len = std::max<size_t>(1, q.size() * (30 + rng() % 61) / 100);
     q = reversed ? q.substr(q.size() - len) : q.substr(0, len);
   }
@@ -176,8 +176,8 @@ bool run_trial(int t, bool dual, const std::string &tmp_gfa, std::string &messag
       const bool end_reached = (walked.path.back() == walk_end);
       if (a.theseus_status != THESEUS_STATUS_ALG_COMPLETED) { ok = false; why = "status is not completed"; }
       else if (end_cond == 0 && !query_done) { ok = false; why = "query not consumed"; }
-      else if (end_cond == 1 && !(query_done && end_reached)) { ok = false; why = "end to end not reached"; }
-      else if (end_cond == 2 && !(query_done || end_reached)) { ok = false; why = "ends free: no end reached"; }
+      else if (end_cond == 2 && !(query_done && end_reached)) { ok = false; why = "end to end not reached"; }
+      else if (end_cond == 1 && !(query_done || end_reached)) { ok = false; why = "ends free: no end reached"; }
     }
     else if (ok && !use_drop) { ok = false; why = "alignment dropped without density drop"; }
     added.push_back(aligned_part(q, consumed, reversed));

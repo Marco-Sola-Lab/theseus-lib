@@ -45,7 +45,7 @@ make
 
 ## <a name="using_theseus"></a> 2. Using Theseus
 
-### <a name="consensus_usage"></a> 2.1. Multiple Sequence Alignment
+### <a name="msa_usage"></a> 2.1. Multiple Sequence Alignment
 
 This example illustrates how to use Theseus as a Multiple Sequence Aligner. First, include the msa and general headers:
 ```
@@ -58,7 +58,7 @@ This example illustrates how to use Theseus as a Multiple Sequence Aligner. Firs
 Then, create and configure a MSA aligner object. This object is defined by three parameters: a set of penalties, a heuristics object, and an initial sequence behaving as the starting point of the alignment. An example on how to set such parameters and create an MSA object is found in the next code snippet:
 ```
 theseus::Penalties penalties(match, mismatch, gap_open, gap_extend);
-theseus::Heuristics heuristics();
+theseus::Heuristics heuristics;
 theseus::TheseusMSA aligner(penalties, heuristics, initial_sequence, seq_weight);
 ```
 
@@ -74,18 +74,18 @@ Each time a new sequence is added to the POA graph, the graph is updated with th
 Each sequence can be aligned with its own options, using the `MSAOptions` struct:
 ```
 theseus::MSAOptions msa_options;
-options.lag_pruning   = false;                              // Prune the diagonals lagging behind
-options.reverse       = false;                              // Align from the sink of the POA graph backwards
-options.end_condition = theseus::EndCondition::FullQuery;   // When the alignment ends
-options.density_drop  = false;                              // Drop the alignments that advance too slowly
+msa_options.lag_pruning   = false;                              // Prune the diagonals lagging behind
+msa_options.reverse       = false;                              // Align from the sink of the POA graph backwards
+msa_options.end_condition = theseus::EndCondition::FullQuery;   // When the alignment ends
+msa_options.density_drop  = false;                              // Drop the alignments that advance too slowly
 theseus::Alignment alignment_object = aligner.align(sequence, weight, msa_options);
 ```
 The call without options, `aligner.align(sequence, weight, lag_pruning_active)`, is the same as using the default options.
 
 **End condition.** It defines when the alignment of a sequence ends, and how the sequence is linked to the POA graph:
-* `FullQuery` (default): the alignment ends when the whole sequence has been consumed, wherever that is in the graph. The sequence is always linked to the sink of the POA graph, so the rest of the graph is not penalized.
+* `FullQuery` (default): the alignment ends when the whole sequence has been consumed, wherever that is in the graph. The sequence is always linked to the sink of the POA graph (to the source in a reverse alignment), so the rest of the graph is not penalized.
 * `EndToEnd`: the whole sequence has been consumed **and** the end of the graph has been reached. The part of the graph that the sequence does not cover is aligned (as a gap), so it is penalized.
-* `EndsFree`: the whole sequence has been consumed **or** the end of the graph has been reached. This is meant for partial sequences, that only cover a part of the graph. If the end of the graph is not reached, the sequence is not linked to the sink, as it does not necessarily end there.
+* `EndsFree`: the whole sequence has been consumed **or** the end of the graph has been reached. This is meant for partial sequences, that only cover a part of the graph. If the end of the graph is not reached, the sequence is not linked to the sink (or to the source in a reverse alignment), as it does not necessarily end there.
 
 **Reverse alignment.** With `reverse = true` the sequence is aligned from the sink of the POA graph backwards: the end of the sequence is aligned to the end of the graph, and its start is free (in a forward alignment the start is fixed and the end is free). With `FullQuery` or `EndsFree` it is the way to add partial sequences that cover the last part of the graph. The alignment (path and edit operations) is returned in the order of the graph and of the sequence, as in a forward alignment.
 
@@ -126,7 +126,7 @@ This example illustrates how to use Theseus as a general Sequence-to-Graph Align
 Then, create and configure an aligner object. This object is defined by three parameters: a set of penalties, a heuristics object, and a reference graph in Theseus' internal graph format. An example on how to set such parameters and create an aligner is found in the next code snippet:
 ```
 theseus::Penalties penalties(match, mismatch, gap_open, gap_extend);
-theseus::Heuristics heuristics();
+theseus::Heuristics heuristics;
 theseus::TheseusAligner aligner(penalties, heuristics, std::move(graph));
 ```
 
@@ -186,13 +186,13 @@ In the command line tools (see [Tools](#theseus_tools)), the second piece is set
 
 The score of an alignment according to these penalties is available in `alignment.score`.
 
-## <a name="theseus_tools"></a> 3.Tools
+## <a name="theseus_tools"></a> 3. Tools
 
-The Theseus library implements two minimal tools to use the Theseus algorithm on the consensus generation context. It is important to note that these tools are not production ready.
+The Theseus library implements two minimal tools to use the Theseus algorithm for multiple sequence alignment (consensus generation) and for sequence-to-graph alignment. It is important to note that these tools are not production ready.
 
-### <a name="consensus_tool"></a> 3.1. MSA tool
+### <a name="msa_tool"></a> 3.1. MSA tool
 
-This example illustrates how to use the **MSA** tool. This tool computes the MSA of the set of sequences in an given input *.fasta* file. The first sequence is the backbone that starts the POA graph, and the following ones are added to it. Partial sequences, that only cover the first or the last part of the backbone, can be added using the per-sequence options described below. The executable is located in the path */build/tools/theseus_msa*:
+This example illustrates how to use the **MSA** tool. This tool computes the MSA of the set of sequences in a given input *.fasta* file. The first sequence is the backbone that starts the POA graph, and the following ones are added to it. Partial sequences, that only cover the first or the last part of the backbone, can be added using the per-sequence options described below. The executable is located in the path */build/tools/theseus_msa*:
 ```
 cd build/tools/
 ```
@@ -200,7 +200,7 @@ cd build/tools/
 Select the scoring scheme, set the input and output files and execute the tool. Each execution of *theseus_msa* lets you select the following parameters:
 ```
 Usage: theseus_msa [OPTIONS]
-                 Options:\n"
+                 Options:
                    -m, --match <int>           The match penalty                                       [default=0]
                    -x, --mismatch <int>        The mismatch penalty                                    [default=2]
                    -o, --gapo <int>            The gap open penalty                                    [default=3]
@@ -251,7 +251,7 @@ This example illustrates how to use the **theseus_aligner** tool. This tool alig
 **[IMPORTANT]**
 The *.fasta* file containing sequences has a special structure. As all .fasta files, the data associated to each sequence has two parts: 1) A line starting with ">" containing metadata, and 2) the sequence itself, that appears on the next lines.
 
-1) Constists of three elements: *start_vertex* name, *start_offset*, orientation of the alignment. The orientation of the alignment can either be "+" or "-" and it indicates Theseus whether to align from the forward or reverse strand of the given start node. *[IMPORTANT]*, the *start_offset* value is respect the starting node in the given alignment orientation. That is, if alignment orientation is reverse ("-") and the offset is 0, alignment starts at the beggining of the reverse complemented segment.
+1) Consists of three elements: *start_vertex* name, *start_offset*, orientation of the alignment. The orientation of the alignment can either be "+" or "-" and it indicates Theseus whether to align from the forward or reverse strand of the given start node. *[IMPORTANT]*, the *start_offset* value is respect the starting node in the given alignment orientation. That is, if alignment orientation is reverse ("-") and the offset is 0, alignment starts at the beginning of the reverse complemented segment.
 2) Contains the sequence itself.
 
 For instance, a sequence ACGT starting at vertex *v1*, offset *3*, in the forward orientation *+*, and aligned from left to right would be codified as:
@@ -280,12 +280,12 @@ Usage: theseus_aligner [OPTIONS]
 
                    I/O:
                    -g, --graph_file <file>      Graph file in .gfa format                               [Required]
-                   -s, --sequences_file <file>  Sequences and starting positons in .fasta format        [Required]
+                   -s, --sequences_file <file>  Sequences and starting positions in .fasta format        [Required]
                    -f, --output_file <file>     Output file                                             [Required]
 
                   Heuristics:
                    -d  --density_heuristic     Activate the drop heuristic based on advancement density.
-                   -l  --lag_pruning           Activate the pruning of diagonals lagging behind int the alignment.
+                   -l  --lag_pruning           Activate the pruning of diagonals lagging behind in the alignment.
 ```
 
 An example of the execution of *theseus_aligner* is shown in the following piece of code
@@ -297,7 +297,9 @@ An example of the execution of *theseus_aligner* is shown in the following piece
 ## <a name="theseus_heuristics"></a> 4. HEURISTICS
 Theseus library implements some heuristic approaches that accelerate alignment at the expense of a limited loss in accuracy. In particular, Theseus implements 1) a **pruning heuristic** that discards diagonals that have fallen behind in the alignment, as long as the alignment has shown a significant advancement in the last scores, and 2) a **drop heuristic** that drops alignment when the advancement density (number of offsets advanced in the last scores) is very low. You can activate these heuristics when calling the align functionality in **theseus::TheseusAligner** or a **theseus::TheseusMSA** aligners.
 
-Moreover, the two minimal tools provided in this alignment library allow you to activate these two heuristics from the command line, so that they are applied to all alignments in the instantiated Aligner object. You can use both heuristics in the *theseus_aligner* tool, and the lag pruning heuristic in the *theseus_msa* tool.
+In the **theseus::TheseusMSA** aligner, the heuristics are selected for each sequence with `MSAOptions` (`lag_pruning` and `density_drop`).
+
+Moreover, the two minimal tools provided in this alignment library allow you to activate these heuristics from the command line. You can use both heuristics in the *theseus_aligner* tool, where they are applied to all alignments. In the *theseus_msa* tool, the lag pruning heuristic can be activated for all sequences with `-l`, and both heuristics can be set for each sequence in its fasta header (see [Per-sequence options](#msa_tool)).
 
 
 ## <a name="theseus_datasets"></a> 5. DATASETS
